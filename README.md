@@ -24,7 +24,7 @@ pip install pg-sync-roles psycopg
 
 ## Usage
 
-To give a user CONNECT privileges on a database
+To give a user CONNECT privileges on a database, as well as membership of role:
 
 ```python
 from pg_sync_roles import DatabaseConnect, RoleMembership, pg_sync_roles
