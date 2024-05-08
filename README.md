@@ -69,8 +69,10 @@ with engine.begin() as conn:
             RoleMembership('my_other_role'),
             SchemaOwnership('my_other_schema', create_if_not_exists=True),
         ),
-        revoke_other_role_memberships=True,
-        revoke_other_table_selects=True,
-        revoke_other_schema_usage=True,
+        revokes=(
+            TableSelect,
+            SchemaUsage,
+            RoleMembership,
+        ),
     )
 ```
