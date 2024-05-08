@@ -20,6 +20,14 @@ classifiers = [
 [project.urls]
 "Source" = "https://github.com/uktrade/pg-sync-roles"
 
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4.4",
+]
+ci = [
+  "pytest==7.4.4",
+]
+
 [tool.hatch.build]
 include = [
   "pg_sync_roles.py"
