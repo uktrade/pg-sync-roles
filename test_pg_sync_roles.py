@@ -1,3 +1,5 @@
+import uuid
+
 import sqlalchemy as sa
 
 try:
@@ -11,12 +13,17 @@ except ImportError:
 
 engine_future = {'future': True} if tuple(int(v) for v in sa.__version__.split('.')) < (2, 0, 0) else {}
 
-from pg_sync_roles import sync_roles
+from pg_sync_roles import sync_roles, DatabaseConnect
 
+# By 4000 roles having permission to something, we get "row is too big" errors, so it's a good
+# number to test on to make sure we don't hit that issue
+ROLES_PER_TEST = 4000
 
 def test_sync_roles():
     engine = sa.create_engine(f'{engine_type}://postgres@127.0.0.1:5432/', **engine_future)
 
     with engine.connect() as conn:
-        sync_roles(conn)
-    assert True
+        for role_name in (uuid.uuid4().hex for _ in range(0, ROLES_PER_TEST)):
+            sync_roles(conn, role_name, grants=(
+                DatabaseConnect('postgres'),
+            ))
