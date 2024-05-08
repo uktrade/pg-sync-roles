@@ -40,7 +40,7 @@ with engine.begin() as conn:
         conn,
         'my_user_name',
         grants=(
-            Login(),
+            Login(password='...', valid_until='...'),
             DatabaseConnect('my_database_name'),
             RoleMembership('my_role_name'),
         ),
