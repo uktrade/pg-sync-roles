@@ -11,3 +11,12 @@ Python utility function to ensure that a PostgreSQL role has certain permissions
 - Locks where necessary - working around "tuple concurrently updated" or "tuple concurrently deleted" errors".
 - Optionally removes permissions from roles
 - Handles database connect, schema usage, table select permissions, and role memberships - typically useful when using PostgreSQL as a data warehouse with a high number of users that need granular permissions.
+
+
+## Installation
+
+pg-sync-rolescan be installed from PyPI using pip. psycopg2 or psycopg (Psycopg 3) must also be explicitly installed.
+
+```bash
+pip install pg-sync-roles psycopg
+```
