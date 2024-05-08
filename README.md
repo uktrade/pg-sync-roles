@@ -44,3 +44,33 @@ with engine.begin() as conn:
             RoleMembership('my_role_name'),
         ),
     )
+```
+
+A more complex example:
+
+```python
+from pg_sync_roles import (
+    RoleMembership,
+    SchemaUsage,
+    SchemaOwnership,
+    TableSelect,
+    pg_sync_roles,
+)
+
+engine = sa.create_engine('postgresql+psycopg://postgres@127.0.0.1:5432/')
+
+with engine.begin() as conn:
+    pg_sync_roles(
+        conn,
+        'my_role_name',
+        grants=(
+            TableSelect('my_schema', 'my_table'),
+            SchemaUsage('my_schema'),
+            RoleMembership('my_other_role'),
+            SchemaOwnership('my_other_schema', create_if_not_exists=True),
+        ),
+        revoke_other_role_memberships=True,
+        revoke_other_table_selects=True,
+        revoke_other_schema_usage=True,
+    )
+```
