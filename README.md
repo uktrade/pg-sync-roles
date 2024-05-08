@@ -20,3 +20,27 @@ pg-sync-rolescan be installed from PyPI using pip. psycopg2 or psycopg (Psycopg 
 ```bash
 pip install pg-sync-roles psycopg
 ```
+
+
+## Usage
+
+To give a user CONNECT privileges on a database
+
+```python
+from pg_sync_roles import DatabaseConnect, RoleMembership, pg_sync_roles
+
+# For example purposes, PostgreSQL can be run locally using this...
+# docker run --rm -it -e POSTGRES_HOST_AUTH_METHOD=trust -p 5432:5432 postgres
+
+# ... which should work with this engine
+engine = sa.create_engine('postgresql+psycopg://postgres@127.0.0.1:5432/')
+
+with engine.begin() as conn:
+    pg_sync_roles(
+        conn,
+        'my_user_name',
+        grants=(
+            DatabaseConnect('my_database_name'),
+            RoleMembership('my_role_name'),
+        ),
+    )
