@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pg-sync-roles"
+version = "0.0.0.dev0"
+authors = [
+  { name="Department for Business and Trade", email="sre@digital.trade.gov.uk" },
+]
+description = "Python utility function to ensure that a PostgreSQL role has certain permissions or role memberships"
+readme = "README.md"
+requires-python = ">=3.7"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+"Source" = "https://github.com/uktrade/pg-sync-roles"
+
+[tool.hatch.build]
+include = [
+  "pg_sync_roles.py"
+]
