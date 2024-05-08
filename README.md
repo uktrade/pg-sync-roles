@@ -15,7 +15,7 @@ Python utility function to ensure that a PostgreSQL role has certain permissions
 
 ## Installation
 
-pg-sync-rolescan be installed from PyPI using pip. psycopg2 or psycopg (Psycopg 3) must also be explicitly installed.
+pg-sync-roles can be installed from PyPI using pip. psycopg2 or psycopg (Psycopg 3) must also be explicitly installed.
 
 ```bash
 pip install pg-sync-roles psycopg
