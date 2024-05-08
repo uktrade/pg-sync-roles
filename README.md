@@ -27,7 +27,7 @@ pip install pg-sync-roles psycopg
 To give a user CONNECT privileges on a database, as well as membership of role:
 
 ```python
-from pg_sync_roles import DatabaseConnect, RoleMembership, pg_sync_roles
+from pg_sync_roles import DatabaseConnect, RoleMembership, sync_roles
 
 # For example purposes, PostgreSQL can be run locally using this...
 # docker run --rm -it -e POSTGRES_HOST_AUTH_METHOD=trust -p 5432:5432 postgres
@@ -36,7 +36,7 @@ from pg_sync_roles import DatabaseConnect, RoleMembership, pg_sync_roles
 engine = sa.create_engine('postgresql+psycopg://postgres@127.0.0.1:5432/')
 
 with engine.begin() as conn:
-    pg_sync_roles(
+    sync_roles(
         conn,
         'my_user_name',
         grants=(
@@ -54,13 +54,13 @@ from pg_sync_roles import (
     SchemaUsage,
     SchemaOwnership,
     TableSelect,
-    pg_sync_roles,
+    sync_roles,
 )
 
 engine = sa.create_engine('postgresql+psycopg://postgres@127.0.0.1:5432/')
 
 with engine.begin() as conn:
-    pg_sync_roles(
+    sync_roles(
         conn,
         'my_role_name',
         grants=(

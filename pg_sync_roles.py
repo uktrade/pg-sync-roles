@@ -1,2 +1,2 @@
-def pg_sync_roles():
+def sync_roles():
     pass
