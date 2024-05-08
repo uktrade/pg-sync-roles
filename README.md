@@ -82,7 +82,7 @@ with engine.begin() as conn:
 
 ## Compatibility
 
-pg-sync-role aims to be compatible with a wide range of Python and other dependencies:
+pg-sync-roles aims to be compatible with a wide range of Python and other dependencies:
 
 - Python >= 3.7.1 (tested on 3.7.1, 3.8.0, 3.9.0, 3.10.0, and 3.11.0)
 - psycopg2 >= 2.9.2 and Psycopg 3 >= 3.1.4
