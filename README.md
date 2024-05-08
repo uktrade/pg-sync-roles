@@ -1,4 +1,4 @@
-# pg-sync-roles [![Test suite](https://img.shields.io/github/actions/workflow/status/uktrade/pg-sync-roles/test.yml?label=Test%20suite)](https://github.com/uktrade/pg-sync-roles/actions/workflows/test.yml)
+# pg-sync-roles [![Test suite](https://img.shields.io/github/actions/workflow/status/uktrade/pg-sync-roles/test.yaml?label=Test%20suite)](https://github.com/uktrade/pg-sync-roles/actions/workflows/test.yaml)
 
 Python utility function to ensure that a PostgreSQL role has certain permissions or role memberships
 
