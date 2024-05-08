@@ -16,6 +16,9 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
+dependencies = [
+    "sqlalchemy>=1.4.24",
+]
 
 [project.urls]
 "Source" = "https://github.com/uktrade/pg-sync-roles"
@@ -27,6 +30,18 @@ dev = [
 ci = [
   "pytest==7.4.4",
   "pytest-cov",
+]
+ci-psycopg2-sqlalchemy1 = [
+    "psycopg2==2.9.2",
+    "sqlalchemy==1.4.24",
+]
+ci-psycopg2-sqlalchemy2 = [
+    "psycopg2==2.9.2",
+    "sqlalchemy==2.0.0",
+]
+ci-psycopg3-sqlalchemy2 = [
+    "psycopg==3.1.4",
+    "sqlalchemy==2.0.0",
 ]
 
 [tool.hatch.build]
