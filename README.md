@@ -46,7 +46,7 @@ with engine.begin() as conn:
     )
 ```
 
-A more complex example:
+A more complex example, where permissions and memberships are granted, but also any existing permissions not passed are revoked:
 
 ```python
 from pg_sync_roles import (
@@ -69,6 +69,8 @@ with engine.begin() as conn:
             RoleMembership('my_other_role'),
             SchemaOwnership('my_other_schema', create_if_not_exists=True),
         ),
+        # Revokes all table select, schema usage, and role memberships
+        # that are not not passed via the grants parameter
         revokes=(
             TableSelect,
             SchemaUsage,
