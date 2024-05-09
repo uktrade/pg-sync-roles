@@ -1,5 +1,6 @@
 import uuid
 
+import pytest
 import sqlalchemy as sa
 
 try:
@@ -19,22 +20,26 @@ from pg_sync_roles import sync_roles, DatabaseConnect
 # number to test on to make sure we don't hit that issue
 ROLES_PER_TEST = 4000
 
-def test_sync_roles():
-    engine = sa.create_engine(f'{engine_type}://postgres@127.0.0.1:5432/', **engine_future)
 
-    with engine.connect() as conn:
+@pytest.fixture()
+def root_engine():
+    return sa.create_engine(f'{engine_type}://postgres@127.0.0.1:5432/', **engine_future)
+
+
+def test_sync_roles(root_engine):
+    with root_engine.connect() as conn:
         for role_name in (uuid.uuid4().hex for _ in range(0, ROLES_PER_TEST)):
             sync_roles(conn, role_name, grants=(
                 DatabaseConnect('postgres'),
             ))
 
-def test_sync_role_for_one_user():
-    engine = sa.create_engine(f'{engine_type}://postgres@127.0.0.1:5432/', **engine_future)
+
+def test_sync_role_for_one_user(root_engine):
     role_name = uuid.uuid4().hex
     database_query = f'''
             SELECT has_database_privilege('{role_name}', 'postgres', 'CONNECT') 
         '''
-    with engine.connect() as conn:
+    with root_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
                 DatabaseConnect('postgres'),
             ))
