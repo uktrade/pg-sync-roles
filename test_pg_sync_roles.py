@@ -55,11 +55,6 @@ def test_engine(root_engine):
         drop_database_if_exists(conn)
 
 
-@pytest.fixture()
-def sync_engine(test_engine):
-    return sa.create_engine(f'{engine_type}://postgres@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
-
-
 def test_many_roles_with_database_connect_does_not_raise_exception(test_engine):
     with test_engine.connect() as conn:
         for role_name in (uuid.uuid4().hex for _ in range(0, ROLES_PER_TEST)):
@@ -68,12 +63,12 @@ def test_many_roles_with_database_connect_does_not_raise_exception(test_engine):
             ))
 
 
-def test_database_connect_does_not_accumulate_roles(test_engine, sync_engine):
+def test_database_connect_does_not_accumulate_roles(test_engine):
     role_name = uuid.uuid4().hex
 
     with \
             test_engine.connect() as conn_test, \
-            sync_engine.connect() as conn_sync:
+            test_engine.connect() as conn_sync:
 
         conn_test.execute(sa.text('SELECT count(*) FROM pg_roles')).fetchall()[0][0]
         conn_test.execute(sa.text('SELECT count(*) FROM pg_roles')).fetchall()[0][0]
