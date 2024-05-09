@@ -81,6 +81,15 @@ with engine.begin() as conn:
 ```
 
 
+## Locking and coordination with other processes that manage permissions
+
+pg-sync-roles obtains an advisory exclusive lock before making any changes - this avoids "tuple concurrently updated" or "tuple concurrently deleted" errors that can be raised when multiple connections change or delete the same permissions-related rows. It does this by calling the `pg_advisory_xact_lock(key bigint)` function. By default a key of 1 is used, but this can be changed by passing a different integer key as the `lock_key` parameter to `sync_roles`.
+
+If you have other processes changing permissions outide of the `sync_roles` function, they should first obtain the same lock by explicitly calling `pg_advisory_xact_lock(key bigint)` with the same key.
+
+The advisory lock is only obtained if `sync_roles` detects there are changes to be made, and is released by the time it returns.
+
+
 ## Under the hood
 
 pg-sync-roles maintains a role per database perimission, a role per schema pemission, and a role per table permission. Rather than roles being granted permissions directly on objects, membership is granted to these roles that indirectly grant permissions on objects. This means that from the object's point of view, only 1 role has any given permission. This works around the de-facto limit on the number of roles that can have permission to any object.
