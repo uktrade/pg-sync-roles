@@ -27,7 +27,7 @@ class Login:
     password: str = None
 
 
-def sync_roles(conn, role_name, grants=()):
+def sync_roles(conn, role_name, grants=(), lock_key=1):
     def is_database_connect_dataclass_instance(obj):
         return is_dataclass(obj) and isinstance(obj, DatabaseConnect)
 
@@ -48,8 +48,8 @@ def sync_roles(conn, role_name, grants=()):
         else:
             conn.commit()
 
-    def lock(lock_id):
-        execute_sql(sql.SQL("SELECT pg_advisory_xact_lock({lock_id})").format(lock_id=sql.Literal(lock_id)))
+    def lock():
+        execute_sql(sql.SQL("SELECT pg_advisory_xact_lock({lock_key})").format(lock_key=sql.Literal(lock_key)))
 
     def get_role_exists(role_name):
         return execute_sql(sql.SQL("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = {role_name})").format(
@@ -155,7 +155,7 @@ def sync_roles(conn, role_name, grants=()):
             return
 
         # But If we do need to make changes, lock, and then re-check everything
-        lock(lock_id=1)
+        lock()
 
         # Make the role if we need to
         role_needed = not get_role_exists(role_name)
