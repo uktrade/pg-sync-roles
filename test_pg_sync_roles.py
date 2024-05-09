@@ -27,3 +27,18 @@ def test_sync_roles():
             sync_roles(conn, role_name, grants=(
                 DatabaseConnect('postgres'),
             ))
+
+def test_sync_role_for_one_user():
+    engine = sa.create_engine(f'{engine_type}://postgres@127.0.0.1:5432/', **engine_future)
+    role_name = uuid.uuid4().hex
+    database_query = f'''
+            SELECT has_database_privilege('{role_name}', 'postgres', 'CONNECT') 
+        '''
+    with engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+                DatabaseConnect('postgres'),
+            ))
+        
+        assert conn.execute(sa.text(database_query)).fetchall()[0][0]
+        
+        
