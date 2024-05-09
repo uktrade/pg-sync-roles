@@ -21,29 +21,56 @@ from pg_sync_roles import sync_roles, DatabaseConnect
 ROLES_PER_TEST = 4000
 
 
+# We make and drop a database in each test to keep them isolated
+TEST_DATABASE_NAME = 'pg_sync_roles_test'
+
+
 @pytest.fixture()
 def root_engine():
     return sa.create_engine(f'{engine_type}://postgres@127.0.0.1:5432/', **engine_future)
 
 
-def test_sync_roles(root_engine):
+@pytest.fixture()
+def test_engine(root_engine):
+    def drop_database_if_exists(conn):
+        # Recent versions of PostgreSQL have a `WITH (force)` option to DROP DATABASE which kills
+        # conections, but we run tests on older versions that don't support this.
+        conn.execute(sa.text(f'''
+            SELECT pg_terminate_backend(pg_stat_activity.pid)
+            FROM pg_stat_activity
+            WHERE pg_stat_activity.datname = '{TEST_DATABASE_NAME}'
+            AND pid != pg_backend_pid();
+        '''));
+        conn.execute(sa.text(f'DROP DATABASE IF EXISTS {TEST_DATABASE_NAME}'))
+
     with root_engine.connect() as conn:
+        conn.execution_options(isolation_level='AUTOCOMMIT')
+        drop_database_if_exists(conn)
+        conn.execute(sa.text(f'CREATE DATABASE {TEST_DATABASE_NAME}'))
+
+    yield sa.create_engine(f'{engine_type}://postgres@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+
+    with root_engine.connect() as conn:
+        conn.execution_options(isolation_level='AUTOCOMMIT')
+        drop_database_if_exists(conn)
+
+
+def test_sync_roles(test_engine):
+    with test_engine.connect() as conn:
         for role_name in (uuid.uuid4().hex for _ in range(0, ROLES_PER_TEST)):
             sync_roles(conn, role_name, grants=(
                 DatabaseConnect('postgres'),
             ))
 
 
-def test_sync_role_for_one_user(root_engine):
+def test_sync_role_for_one_user(test_engine):
     role_name = uuid.uuid4().hex
     database_query = f'''
-            SELECT has_database_privilege('{role_name}', 'postgres', 'CONNECT') 
+            SELECT has_database_privilege('{role_name}', '{TEST_DATABASE_NAME}', 'CONNECT') 
         '''
-    with root_engine.connect() as conn:
+    with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
-                DatabaseConnect('postgres'),
+                DatabaseConnect(TEST_DATABASE_NAME),
             ))
         
         assert conn.execute(sa.text(database_query)).fetchall()[0][0]
-        
-        
