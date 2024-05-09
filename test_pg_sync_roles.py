@@ -2,6 +2,7 @@ import uuid
 
 import pytest
 import sqlalchemy as sa
+from datetime import datetime, timezone, timedelta
 
 try:
     # psycopg2
@@ -14,7 +15,7 @@ except ImportError:
 
 engine_future = {'future': True} if tuple(int(v) for v in sa.__version__.split('.')) < (2, 0, 0) else {}
 
-from pg_sync_roles import sync_roles, DatabaseConnect
+from pg_sync_roles import sync_roles, DatabaseConnect, Login
 
 # By 4000 roles having permission to something, we get "row is too big" errors, so it's a good
 # number to test on to make sure we don't hit that issue
@@ -27,7 +28,7 @@ TEST_DATABASE_NAME = 'pg_sync_roles_test'
 
 @pytest.fixture()
 def root_engine():
-    return sa.create_engine(f'{engine_type}://postgres@127.0.0.1:5432/', **engine_future)
+    return sa.create_engine(f'{engine_type}://postgres:postgres@127.0.0.1:5432/', **engine_future)
 
 
 @pytest.fixture()
@@ -40,15 +41,16 @@ def test_engine(root_engine):
             FROM pg_stat_activity
             WHERE pg_stat_activity.datname = '{TEST_DATABASE_NAME}'
             AND pid != pg_backend_pid();
-        '''));
+        '''))
         conn.execute(sa.text(f'DROP DATABASE IF EXISTS {TEST_DATABASE_NAME}'))
 
     with root_engine.connect() as conn:
         conn.execution_options(isolation_level='AUTOCOMMIT')
         drop_database_if_exists(conn)
         conn.execute(sa.text(f'CREATE DATABASE {TEST_DATABASE_NAME}'))
+        conn.execute(sa.text(f'REVOKE CONNECT ON DATABASE {TEST_DATABASE_NAME} FROM PUBLIC'))
 
-    yield sa.create_engine(f'{engine_type}://postgres@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    yield sa.create_engine(f'{engine_type}://postgres:postgres@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
 
     with root_engine.connect() as conn:
         conn.execution_options(isolation_level='AUTOCOMMIT')
@@ -99,11 +101,152 @@ def test_database_connect_does_not_accumulate_roles(test_engine):
 def test_sync_role_for_one_user(test_engine):
     role_name = uuid.uuid4().hex
     database_query = f'''
-            SELECT has_database_privilege('{role_name}', '{TEST_DATABASE_NAME}', 'CONNECT') 
+            SELECT has_database_privilege('{role_name}', '{TEST_DATABASE_NAME}', 'CONNECT')
         '''
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
                 DatabaseConnect(TEST_DATABASE_NAME),
             ))
-        
+
         assert conn.execute(sa.text(database_query)).fetchall()[0][0]
+
+
+def test_login_expired_valid_until_cannot_connect(test_engine):
+    role_name = uuid.uuid4().hex
+    valid_until = datetime.now(timezone.utc) - timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with pytest.raises(sa.exc.OperationalError, match='password authentication failed'):
+        engine.connect()
+
+
+def test_login_incorrect_password_cannot_connect(test_engine):
+    role_name = uuid.uuid4().hex
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:not-the-password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with pytest.raises(sa.exc.OperationalError, match='password authentication failed'):
+        engine.connect()
+
+
+def test_login_is_only_applied_to_passed_role(test_engine):
+    role_name_with_login = uuid.uuid4().hex
+    role_name_without_login = uuid.uuid4().hex
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name_with_login, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+        ))
+        sync_roles(conn, role_name_without_login, grants=(
+            DatabaseConnect(TEST_DATABASE_NAME),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name_without_login}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with pytest.raises(sa.exc.OperationalError, match='password authentication failed'):
+        engine.connect()
+
+
+def test_login_without_database_connect_cannot_connect(test_engine):
+    role_name = uuid.uuid4().hex
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with pytest.raises(sa.exc.OperationalError, match='User does not have CONNECT privilege'):
+        engine.connect()
+
+
+def test_login_with_different_database_connect_cannot_connect(test_engine):
+    role_name = uuid.uuid4().hex
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect('postgres'),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with pytest.raises(sa.exc.OperationalError, match='User does not have CONNECT privilege'):
+        engine.connect()
+
+
+def test_login_with_valid_until_initialy_future_but_changed_to_be_in_the_past_cannot_connect(test_engine):
+    role_name = uuid.uuid4().hex
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+        ))
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until - timedelta(minutes=20), password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with pytest.raises(sa.exc.OperationalError, match='password authentication failed'):
+        engine.connect()
+
+
+def test_login_cannot_connect_with_old_password(test_engine):
+    role_name = uuid.uuid4().hex
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+        ))
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='newpasswrd'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with pytest.raises(sa.exc.OperationalError, match='password authentication failed'):
+        engine.connect()
+
+
+def test_login_can_connect(test_engine):
+    role_name = uuid.uuid4().hex
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with engine.connect() as conn:
+        assert conn.execute(sa.text("SELECT 1")).fetchall()[0][0] == 1
+
+
+def test_login_can_connect_after_second_sync_by_no_password(test_engine):
+    role_name = uuid.uuid4().hex
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+        ))
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until),
+            DatabaseConnect(TEST_DATABASE_NAME),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with engine.connect() as conn:
+        assert conn.execute(sa.text("SELECT 1")).fetchall()[0][0] == 1
