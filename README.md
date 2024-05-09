@@ -8,8 +8,8 @@ Python utility function to ensure that a PostgreSQL role has certain permissions
 ## Features
 
 - Transparently handles high numbers of permissions - avoiding "row is too big" errors.
-- Locks where necessary - working around "tuple concurrently updated" or "tuple concurrently deleted" errors" that can happen when permission changes are performed concurrently.
-- Optionally removes permissions from roles
+- Locks where necessary - working around "tuple concurrently updated" or "tuple concurrently deleted" errors that can happen when permission changes are performed concurrently.
+- Optionally removes permissions from roles.
 - Handles database connect, schema usage, table select permissions, and role memberships - typically useful when using PostgreSQL as a data warehouse with a high number of users that need granular permissions.
 
 
@@ -79,6 +79,13 @@ with engine.begin() as conn:
         ),
     )
 ```
+
+
+## Under the hood
+
+pg-sync-roles maintains a role per database perimission, a role per schema pemission, and and per table permission, and rather than roles being granted permissions directly on objects, membership is granted to these roles that indirectly grant permissions on objects. This means that from the object's point of view, only 1 role has any given permission. This works around the de-facto limit on the number of roles that can have permission to any object.
+
+The names of the roles maintained by pg-sync-roles begin with the prefix `_pgsr_`. Each name ends with a randomly generated unique identifier.
 
 
 ## Compatibility

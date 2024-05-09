@@ -51,7 +51,7 @@ def sync_roles(conn, role_name, grants=()):
             existing_database_connect_roles_rows = execute_sql(sql.SQL("""
                 SELECT datname, grantee::regrole
                 FROM pg_database, aclexplode(datacl)
-                WHERE grantee::regrole::text LIKE 'database\\_connect\\_%'
+                WHERE grantee::regrole::text LIKE '\\_pgsr\\_database\\_connect\\_%'
                 AND privilege_type = 'CONNECT'
                 AND datname IN ({database_names})
             """).format(database_names=sql.SQL(',').join(sql.Literal(database_name) for database_name in database_names))).fetchall()
@@ -78,7 +78,7 @@ def sync_roles(conn, role_name, grants=()):
 
     def get_available_database_connect_role():
         for _ in range(0, 10):
-            database_connect_role = 'database_connect_' + uuid4().hex[:8]
+            database_connect_role = '\\_pgsr\\_database_connect_' + uuid4().hex[:8]
             if not get_role_exists(database_connect_role):
                 return database_connect_role
 
@@ -143,7 +143,7 @@ def sync_roles(conn, role_name, grants=()):
         for database_name in databases_needing_connect_roles:
             database_connect_role = get_available_database_connect_role()
             create_role(database_connect_role)
-            grant_connect(database_name, database_connect_role)
+            grant_connect(database_name, \___role)
             database_connect_roles[database_name] = database_connect_role
 
         # Grant memberships if we need to
