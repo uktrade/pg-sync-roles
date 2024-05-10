@@ -51,27 +51,27 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         )).fetchall()[0][0]
 
     def get_database_connect_roles(database_connects):
-        if database_connects:
-            existing_database_connect_roles_rows = execute_sql(sql.SQL("""
-                SELECT datname, grantee::regrole
-                FROM pg_database, aclexplode(datacl)
-                WHERE grantee::regrole::text LIKE '\\_pgsr\\_database\\_connect\\_%'
-                AND privilege_type = 'CONNECT'
-                AND datname IN ({database_names})
+        database_name_role_names = \
+            [] if not database_connects else \
+            execute_sql(sql.SQL("""
+                SELECT database_name, grantee::regrole
+                FROM (
+                    VALUES {database_names}
+                ) dn(database_name)
+                LEFT JOIN (
+                    SELECT datname, grantee
+                    FROM pg_database, aclexplode(datacl)
+                    WHERE grantee::regrole::text LIKE '\\_pgsr\\_database\\_connect\\_%'
+                    AND privilege_type = 'CONNECT'
+                ) grantees ON grantees.datname = dn.database_name
             """).format(database_names=sql.SQL(',').join(
-                sql.Literal(database_connect.database_name)
+                sql.SQL('({})').format(sql.Literal(database_connect.database_name))
                 for database_connect in database_connects
             ))).fetchall()
-        else:
-            existing_database_connect_roles_rows = []
 
-        existing_database_connect_roles_dict = {
-            database_name: role_name
-            for database_name, role_name in existing_database_connect_roles_rows
-        }
         return {
-            database_connect.database_name: existing_database_connect_roles_dict.get(database_connect.database_name)
-            for database_connect in database_connects
+            database_name: role_name
+            for database_name, role_name in database_name_role_names
         }
 
     def get_memberships(role_name):
