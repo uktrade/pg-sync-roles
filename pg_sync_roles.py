@@ -125,12 +125,13 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
     database_connects = tuple(grant for grant in grants if isinstance(grant, DatabaseConnect))
     logins = tuple(grant for grant in grants if isinstance(grant, Login))
 
+    # Validation
+    if len(logins) > 1:
+        raise ValueError('At most 1 Login object can be passed via the grants parameter')
+
     with transaction():
         # Extract the database names we want to GRANT connect to
         database_names = tuple(database_connect.database_name for database_connect in database_connects)
-
-        if len(logins) > 1:
-            raise ValueError('At most 1 Login object can be passed via the grants parameter')
 
         # Find if we need to make the role
         role_needed = not get_role_exists(role_name)
