@@ -117,6 +117,9 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             role_name=sql.Identifier(role_name),
         ))
 
+    def keys_with_none_value(d):
+        return tuple(key for key, value in d.items() if value is None)
+
     # Choose the correct library for dynamically constructing SQL based on the underlying
     # engine of the SQLAlchemy connection
     sql = {
@@ -138,7 +141,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 
         # Or the database connect roles
         database_connect_roles = get_database_connect_roles(database_connects)
-        database_connect_roles_needed = any(connect_role is None for connect_role in database_connect_roles.values())
+        database_connect_roles_needed = keys_with_none_value(database_connect_roles)
 
         # Or any memberships of the database connect roles
         memberships = set(get_memberships(role_name)) if not role_needed else set()
@@ -161,12 +164,8 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 
         # Create database connect roles if we need to
         database_connect_roles = get_database_connect_roles(database_connects)
-        databases_needing_connect_roles = tuple(
-            database_name
-            for database_name, database_connect_role in database_connect_roles.items()
-            if database_connect_role is None
-        )
-        for database_name in databases_needing_connect_roles:
+        database_connect_roles_needed = keys_with_none_value(database_connect_roles)
+        for database_name in database_connect_roles_needed:
             database_connect_role = get_available_database_connect_role()
             create_role(database_connect_role)
             grant_connect(database_name, database_connect_role)
