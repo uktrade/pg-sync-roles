@@ -121,12 +121,14 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         'psycopg': sql3,
     }[conn.engine.driver]
 
+    # Split grants by their type
+    database_connects = tuple(grant for grant in grants if isinstance(grant, DatabaseConnect))
+    logins = tuple(grant for grant in grants if isinstance(grant, Login))
+
     with transaction():
         # Extract the database names we want to GRANT connect to
-        database_connects = tuple(grant for grant in grants if isinstance(grant, DatabaseConnect))
         database_names = tuple(database_connect.database_name for database_connect in database_connects)
 
-        logins = tuple(grant for grant in grants if isinstance(grant, Login))
         if len(logins) > 1:
             raise ValueError('At most 1 Login object can be passed via the grants parameter')
 
