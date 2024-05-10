@@ -26,9 +26,13 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=7.4.4",
+  "wrapt>=14.1",
 ]
 ci = [
   "pytest==7.4.4",
+  # At the time of writing, 1.14.1 is the latest version of wrapt that the latest version of
+  # elastic-apm can be installed with
+  "wrapt==1.14.1",
   "pytest-cov",
 ]
 ci-psycopg2-sqlalchemy1 = [
