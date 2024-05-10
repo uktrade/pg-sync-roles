@@ -28,12 +28,6 @@ class Login:
 
 
 def sync_roles(conn, role_name, grants=(), lock_key=1):
-    def is_database_connect_dataclass_instance(obj):
-        return is_dataclass(obj) and isinstance(obj, DatabaseConnect)
-
-    def is_login_dataclass_instance(obj):
-        return is_dataclass(obj) and isinstance(obj, Login)
-
     def execute_sql(sql_obj):
         return conn.execute(sa.text(sql_obj.as_string(conn.connection.driver_connection)))
 
@@ -129,10 +123,10 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 
     with transaction():
         # Extract the database names we want to GRANT connect to
-        database_connects = tuple(grant for grant in grants if is_database_connect_dataclass_instance(grant))
+        database_connects = tuple(grant for grant in grants if isinstance(grant, DatabaseConnect))
         database_names = tuple(database_connect.database_name for database_connect in database_connects)
 
-        logins = tuple(grant for grant in grants if is_login_dataclass_instance(grant))
+        logins = tuple(grant for grant in grants if isinstance(grant, Login))
         if len(logins) > 1:
             raise ValueError('At most 1 Login object can be passed via the grants parameter')
 
