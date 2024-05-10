@@ -32,7 +32,10 @@ class RoleMembership:
 
 def sync_roles(conn, role_name, grants=(), lock_key=1):
     def execute_sql(sql_obj):
-        return conn.execute(sa.text(sql_obj.as_string(conn.connection.driver_connection)))
+        # This avoids "argument 1 must be psycopg2.extensions.connection, not PGConnectionProxy"
+        # which can happen when elastic-apm wraps the connection object when using psycopg2
+        unwrapped_connection = getattr(conn.connection.driver_connection, '__wrapped__', conn.connection.driver_connection)
+        return conn.execute(sa.text(sql_obj.as_string(unwrapped_connection)))
 
     @contextmanager
     def transaction():
