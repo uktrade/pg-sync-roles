@@ -115,6 +115,7 @@ def test_database_connect_does_not_accumulate_roles(test_engine):
 
 
 test_grants = [
+    (Login(valid_until=datetime(2000,1,1, tzinfo=timezone.utc)),),
     (DatabaseConnect(TEST_DATABASE_NAME),),
     (RoleMembership(TEST_BASE_ROLE),),
 ]
