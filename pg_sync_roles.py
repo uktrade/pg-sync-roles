@@ -50,15 +50,18 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             role_name=sql.Literal(role_name),
         )).fetchall()[0][0]
 
-    def get_database_connect_roles(database_names):
-        if database_names:
+    def get_database_connect_roles(database_connects):
+        if database_connects:
             existing_database_connect_roles_rows = execute_sql(sql.SQL("""
                 SELECT datname, grantee::regrole
                 FROM pg_database, aclexplode(datacl)
                 WHERE grantee::regrole::text LIKE '\\_pgsr\\_database\\_connect\\_%'
                 AND privilege_type = 'CONNECT'
                 AND datname IN ({database_names})
-            """).format(database_names=sql.SQL(',').join(sql.Literal(database_name) for database_name in database_names))).fetchall()
+            """).format(database_names=sql.SQL(',').join(
+                sql.Literal(database_connect.database_name)
+                for database_connect in database_connects
+            ))).fetchall()
         else:
             existing_database_connect_roles_rows = []
 
@@ -67,8 +70,8 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             for database_name, role_name in existing_database_connect_roles_rows
         }
         return {
-            database_name: existing_database_connect_roles_dict.get(database_name)
-            for database_name in database_names
+            database_connect.database_name: existing_database_connect_roles_dict.get(database_connect.database_name)
+            for database_connect in database_connects
         }
 
     def get_memberships(role_name):
@@ -130,14 +133,11 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         raise ValueError('At most 1 Login object can be passed via the grants parameter')
 
     with transaction():
-        # Extract the database names we want to GRANT connect to
-        database_names = tuple(database_connect.database_name for database_connect in database_connects)
-
         # Find if we need to make the role
         role_needed = not get_role_exists(role_name)
 
         # Or the database connect roles
-        database_connect_roles = get_database_connect_roles(database_names)
+        database_connect_roles = get_database_connect_roles(database_connects)
         database_connect_roles_needed = any(connect_role is None for connect_role in database_connect_roles.values())
 
         # Or any memberships of the database connect roles
@@ -160,7 +160,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             create_role(role_name)
 
         # Create database connect roles if we need to
-        database_connect_roles = get_database_connect_roles(database_names)
+        database_connect_roles = get_database_connect_roles(database_connects)
         databases_needing_connect_roles = tuple(
             database_name
             for database_name, database_connect_role in database_connect_roles.items()
