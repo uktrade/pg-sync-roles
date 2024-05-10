@@ -145,7 +145,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 
         # Or any memberships of the database connect roles
         memberships = set(get_memberships(role_name)) if not role_needed else set()
-        memberships_needed = tuple(role for role in database_connect_roles if role not in memberships)
+        memberships_needed = tuple(role for role in database_connect_roles.values() if role not in memberships)
 
         can_login, valid_until = get_can_login_valid_until(role_name) if not role_needed else (False, None)
         logins_needed = logins and (not can_login or valid_until != logins[0].valid_until or logins[0].password is not None)
