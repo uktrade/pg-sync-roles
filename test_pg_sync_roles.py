@@ -1,3 +1,4 @@
+import threading
 import uuid
 
 import pytest
@@ -96,6 +97,42 @@ def test_database_connect_does_not_accumulate_roles(test_engine):
         assert count_roles_2 == count_roles_1 + 1
         assert count_roles_3 == count_roles_2 + 1
         assert count_roles_4 == count_roles_3
+
+
+def test_database_connect_again_does_not_take_lock(test_engine):
+    role_name = uuid.uuid4().hex
+
+    done = threading.Event()
+
+    def terminate_all_backends_after_five_seconds():
+        done.wait(timeout=2)
+        with test_engine.connect() as conn:
+            conn.execute(sa.text(f'''
+                SELECT pg_terminate_backend(pg_stat_activity.pid)
+                FROM pg_stat_activity
+                WHERE pg_stat_activity.datname = '{TEST_DATABASE_NAME}'
+                AND pid != pg_backend_pid();
+            '''))
+
+    t = threading.Thread(target=terminate_all_backends_after_five_seconds)
+    t.start()
+
+    with \
+            test_engine.connect() as conn_test, \
+            test_engine.connect() as conn_sync:
+
+        sync_roles(conn_sync, role_name, grants=(
+            DatabaseConnect(TEST_DATABASE_NAME),
+        ), lock_key=1)
+
+        conn_test.execute(sa.text('SELECT pg_advisory_xact_lock(1)'))
+
+        sync_roles(conn_sync, role_name, grants=(
+            DatabaseConnect(TEST_DATABASE_NAME),
+        ), lock_key=1)
+
+    done.set()
+    t.join(timeout=4)
 
 
 def test_sync_role_for_one_user(test_engine):
