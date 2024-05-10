@@ -16,7 +16,7 @@ except ImportError:
 
 engine_future = {'future': True} if tuple(int(v) for v in sa.__version__.split('.')) < (2, 0, 0) else {}
 
-from pg_sync_roles import sync_roles, DatabaseConnect, Login
+from pg_sync_roles import sync_roles, DatabaseConnect, Login, RoleMembership
 
 # By 4000 roles having permission to something, we get "row is too big" errors, so it's a good
 # number to test on to make sure we don't hit that issue
@@ -25,6 +25,21 @@ ROLES_PER_TEST = 4000
 
 # We make and drop a database in each test to keep them isolated
 TEST_DATABASE_NAME = 'pg_sync_roles_test'
+TEST_BASE_ROLE = '__pgsr_base_role'
+
+
+def is_member(conn, child_role_name, parent_role_name):
+    query = f'''
+        SELECT EXISTS (
+            SELECT 1 FROM pg_auth_members
+            WHERE member = :child_role_name ::regrole
+            AND roleid = :parent_role_name ::regrole
+        )
+    '''
+    return conn.execute(sa.text(query), {
+        'child_role_name': child_role_name,
+        'parent_role_name': parent_role_name,
+    }).fetchall()[0][0]
 
 
 @pytest.fixture()
@@ -99,7 +114,12 @@ def test_database_connect_does_not_accumulate_roles(test_engine):
         assert count_roles_4 == count_roles_3
 
 
-def test_database_connect_again_does_not_take_lock(test_engine):
+test_grants = [
+    (DatabaseConnect(TEST_DATABASE_NAME),),
+    (RoleMembership(TEST_BASE_ROLE),),
+]
+@pytest.mark.parametrize('grants', test_grants)
+def test_grants_does_not_take_lock(test_engine, grants):
     role_name = uuid.uuid4().hex
 
     done = threading.Event()
@@ -121,15 +141,9 @@ def test_database_connect_again_does_not_take_lock(test_engine):
             test_engine.connect() as conn_test, \
             test_engine.connect() as conn_sync:
 
-        sync_roles(conn_sync, role_name, grants=(
-            DatabaseConnect(TEST_DATABASE_NAME),
-        ), lock_key=1)
-
+        sync_roles(conn_sync, role_name, grants=grants, lock_key=1)
         conn_test.execute(sa.text('SELECT pg_advisory_xact_lock(1)'))
-
-        sync_roles(conn_sync, role_name, grants=(
-            DatabaseConnect(TEST_DATABASE_NAME),
-        ), lock_key=1)
+        sync_roles(conn_sync, role_name, grants=grants, lock_key=1)
 
     done.set()
     t.join(timeout=4)
@@ -287,3 +301,35 @@ def test_login_can_connect_after_second_sync_by_no_password(test_engine):
     engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
     with engine.connect() as conn:
         assert conn.execute(sa.text("SELECT 1")).fetchall()[0][0] == 1
+
+
+def test_role_membership_in_one_step(test_engine):
+    role_name = uuid.uuid4().hex
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            RoleMembership(TEST_BASE_ROLE),
+        ))
+        assert is_member(conn, role_name, TEST_BASE_ROLE)
+
+
+def test_role_membership_in_multiple_steps(test_engine):
+    role_name = uuid.uuid4().hex
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name)
+        sync_roles(conn, role_name, grants=(
+            RoleMembership(TEST_BASE_ROLE),
+        ))
+        assert is_member(conn, role_name, TEST_BASE_ROLE)
+
+
+def test_role_membership_only_granted_to_passed_role(test_engine):
+    role_name_1 = uuid.uuid4().hex
+    role_name_2 = uuid.uuid4().hex
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name_1)
+        sync_roles(conn, role_name_2, grants=(
+            RoleMembership(TEST_BASE_ROLE),
+        ))
+
+        assert not is_member(conn, role_name_1, TEST_BASE_ROLE)
+        assert is_member(conn, role_name_2, TEST_BASE_ROLE)
