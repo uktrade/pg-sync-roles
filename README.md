@@ -35,7 +35,7 @@ from pg_sync_roles import Login, DatabaseConnect, RoleMembership, sync_roles
 # ... which should work with this engine
 engine = sa.create_engine('postgresql+psycopg://postgres@127.0.0.1:5432/')
 
-with engine.begin() as conn:
+with engine.connect() as conn:
     sync_roles(
         conn,
         'my_user_name',
@@ -60,7 +60,7 @@ from pg_sync_roles import (
 
 engine = sa.create_engine('postgresql+psycopg://postgres@127.0.0.1:5432/')
 
-with engine.begin() as conn:
+with engine.connect() as conn:
     sync_roles(
         conn,
         'my_role_name',
