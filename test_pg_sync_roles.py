@@ -55,6 +55,8 @@ def root_engine():
 @pytest.fixture()
 def test_engine(root_engine):
     def drop_database_if_exists(conn):
+        # Roles are cluster-wide
+        conn.execute(sa.text(f'DROP ROLE IF EXISTS {TEST_BASE_ROLE}'))
         # Recent versions of PostgreSQL have a `WITH (force)` option to DROP DATABASE which kills
         # conections, but we run tests on older versions that don't support this.
         conn.execute(sa.text(f'''
