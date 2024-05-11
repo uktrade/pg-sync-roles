@@ -26,6 +26,10 @@ from pg_sync_roles import sync_roles, DatabaseConnect, Login, RoleMembership
 ROLES_PER_TEST = 4000
 
 
+# The default/root database that comes with the PostgreSQL Docker image
+ROOT_DATABASE_NAME = 'postgres'
+
+
 # We make and drop a database in each test to keep them isolated
 TEST_DATABASE_NAME = 'pg_sync_roles_test'
 TEST_BASE_ROLE = '__pgsr_base_role'
@@ -47,7 +51,7 @@ def is_member(conn, child_role_name, parent_role_name):
 
 @pytest.fixture()
 def root_engine():
-    return sa.create_engine(f'{engine_type}://postgres:postgres@127.0.0.1:5432/', **engine_future)
+    return sa.create_engine(f'{engine_type}://postgres:postgres@127.0.0.1:5432/{ROOT_DATABASE_NAME}', **engine_future)
 
 
 @pytest.fixture()
@@ -80,7 +84,7 @@ def test_many_roles_with_database_connect_does_not_raise_exception(test_engine):
     with test_engine.connect() as conn:
         for role_name in (uuid.uuid4().hex for _ in range(0, ROLES_PER_TEST)):
             sync_roles(conn, role_name, grants=(
-                DatabaseConnect('postgres'),
+                DatabaseConnect(TEST_DATABASE_NAME),
             ))
 
 
@@ -231,7 +235,7 @@ def test_login_with_different_database_connect_cannot_connect(test_engine):
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
             Login(valid_until=valid_until, password='password'),
-            DatabaseConnect('postgres'),
+            DatabaseConnect(ROOT_DATABASE_NAME),
         ))
 
     engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
