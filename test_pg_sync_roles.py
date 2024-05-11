@@ -198,6 +198,30 @@ def test_identical_grant_does_not_take_lock(test_engine, grants):
     t.join(timeout=4)
 
 
+@pytest.mark.parametrize('grants', [
+    (),
+    (Login(valid_until=datetime(2000,1,1, tzinfo=timezone.utc)),),
+    (DatabaseConnect(TEST_DATABASE_NAME),),
+    (RoleMembership(TEST_BASE_ROLE),),
+])
+def test_lock_can_timeout_and_connection_is_usable(test_engine, grants):
+    role_name = uuid.uuid4().hex
+
+    with \
+            test_engine.connect() as conn_test, \
+            test_engine.connect() as conn_sync:
+
+        conn_test.execute(sa.text('SELECT pg_advisory_xact_lock(1)'))
+        conn_sync.execute(sa.text("SET statement_timeout = '500ms'"))
+        conn_sync.commit()
+
+        with pytest.raises(sa.exc.OperationalError, match='canceling statement due to statement timeout'):
+            sync_roles(conn_sync, role_name, grants=grants, lock_key=1)
+
+        # Asserts that we've rolled back
+        assert conn_sync.execute(sa.text('SELECT 1')).fetchall()[0][0] == 1
+
+
 def test_sync_role_for_one_user(test_engine):
     role_name = uuid.uuid4().hex
     database_query = f'''
