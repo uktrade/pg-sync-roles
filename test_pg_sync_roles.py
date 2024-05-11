@@ -1,5 +1,6 @@
 import functools
 import threading
+import time
 import uuid
 from datetime import datetime, timezone, timedelta
 
@@ -121,13 +122,53 @@ def test_database_connect_does_not_accumulate_roles(test_engine):
         assert count_roles_4 == count_roles_3
 
 
-test_grants = [
+@pytest.mark.parametrize('grants', [
+    (),
     (Login(valid_until=datetime(2000,1,1, tzinfo=timezone.utc)),),
     (DatabaseConnect(TEST_DATABASE_NAME),),
     (RoleMembership(TEST_BASE_ROLE),),
-]
-@pytest.mark.parametrize('grants', test_grants)
-def test_grants_does_not_take_lock(test_engine, grants):
+])
+def test_initial_grant_takes_lock(test_engine, grants):
+    role_name = uuid.uuid4().hex
+    got_lock = threading.Event()
+    num_blocked = 0
+
+    def take_lock():
+        nonlocal num_blocked
+
+        with test_engine.connect() as conn:
+            conn.execute(sa.text('SELECT pg_advisory_xact_lock(1)'))
+            got_lock.set()
+            for _ in range(0, 50):
+                # We don't use pg_blocking_pids because sometimes, especially in CI, it seems
+                # to repeatedly return nothing, even if we're pretty sure something is blocked
+                num_blocked = conn.execute(sa.text('''
+                    SELECT count(*)
+                    FROM pg_locks
+                    WHERE locktype = 'advisory' AND granted = FALSE
+                ''')).fetchall()[0][0]
+                if num_blocked:
+                    break
+                time.sleep(0.2)
+
+    t = threading.Thread(target=take_lock)
+    t.start()
+
+    with test_engine.connect() as conn:
+        got_lock.wait(timeout=5)
+        sync_roles(conn, role_name, grants=grants, lock_key=1)
+
+    t.join(timeout=15)
+    assert num_blocked
+
+
+@pytest.mark.parametrize('grants', [
+    (),
+    (Login(valid_until=datetime(2000,1,1, tzinfo=timezone.utc)),),
+    (DatabaseConnect(TEST_DATABASE_NAME),),
+    (RoleMembership(TEST_BASE_ROLE),),
+])
+def test_identical_grant_does_not_take_lock(test_engine, grants):
     role_name = uuid.uuid4().hex
 
     done = threading.Event()
@@ -155,6 +196,30 @@ def test_grants_does_not_take_lock(test_engine, grants):
 
     done.set()
     t.join(timeout=4)
+
+
+@pytest.mark.parametrize('grants', [
+    (),
+    (Login(valid_until=datetime(2000,1,1, tzinfo=timezone.utc)),),
+    (DatabaseConnect(TEST_DATABASE_NAME),),
+    (RoleMembership(TEST_BASE_ROLE),),
+])
+def test_lock_can_timeout_and_connection_is_usable(test_engine, grants):
+    role_name = uuid.uuid4().hex
+
+    with \
+            test_engine.connect() as conn_test, \
+            test_engine.connect() as conn_sync:
+
+        conn_test.execute(sa.text('SELECT pg_advisory_xact_lock(1)'))
+        conn_sync.execute(sa.text("SET statement_timeout = '500ms'"))
+        conn_sync.commit()
+
+        with pytest.raises(sa.exc.OperationalError, match='canceling statement due to statement timeout'):
+            sync_roles(conn_sync, role_name, grants=grants, lock_key=1)
+
+        # Asserts that we've rolled back
+        assert conn_sync.execute(sa.text('SELECT 1')).fetchall()[0][0] == 1
 
 
 def test_sync_role_for_one_user(test_engine):
