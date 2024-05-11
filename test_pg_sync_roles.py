@@ -501,3 +501,14 @@ def test_role_membership_only_granted_to_multiple_roles(test_engine):
 
         assert is_member(conn, role_name_1, TEST_BASE_ROLE)
         assert is_member(conn, role_name_2, TEST_BASE_ROLE)
+
+
+def test_role_membership_revoked(test_engine):
+    role_name = get_test_role()
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            RoleMembership(TEST_BASE_ROLE),
+        ))
+        sync_roles(conn, role_name)
+
+        assert not is_member(conn, role_name, TEST_BASE_ROLE)
