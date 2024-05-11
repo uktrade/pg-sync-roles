@@ -96,9 +96,9 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             SELECT rolcanlogin, rolvaliduntil FROM pg_roles WHERE rolname={role_name} LIMIT 1'''
         ).format(role_name=sql.Literal(role_name))).fetchall()[0]
 
-    def get_available_database_connect_role():
+    def get_available_acl_role(base):
         for _ in range(0, 10):
-            database_connect_role = '_pgsr_database_connect_' + uuid4().hex[:8]
+            database_connect_role = base + uuid4().hex[:8]
             if not get_role_exists(database_connect_role):
                 return database_connect_role
 
@@ -204,7 +204,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         database_connect_roles = get_database_connect_roles(database_connects)
         database_connect_roles_needed = keys_with_none_value(database_connect_roles)
         for database_name in database_connect_roles_needed:
-            database_connect_role = get_available_database_connect_role()
+            database_connect_role = get_available_acl_role('_pgsr_database_connect_')
             create_role(database_connect_role)
             grant_connect(database_name, database_connect_role)
             database_connect_roles[database_name] = database_connect_role
