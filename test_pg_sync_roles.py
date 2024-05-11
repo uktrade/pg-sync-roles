@@ -422,6 +422,17 @@ def test_login_can_connect_after_second_sync_by_no_password(test_engine):
         assert conn.execute(sa.text("SELECT 1")).fetchall()[0][0] == 1
 
 
+def test_multiple_login_raises_value_error(test_engine):
+    role_name = uuid.uuid4().hex
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        with pytest.raises(ValueError):
+            sync_roles(conn, role_name, grants=(
+                Login(valid_until=valid_until, password='password'),
+                Login(valid_until=valid_until, password='password'),
+            ))
+
+
 def test_role_membership_in_one_step(test_engine):
     role_name = uuid.uuid4().hex
     with test_engine.connect() as conn:
