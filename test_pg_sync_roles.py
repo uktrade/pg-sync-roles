@@ -7,7 +7,6 @@ import pytest
 import sqlalchemy as sa
 import wrapt
 
-
 try:
     # psycopg2
     import psycopg2
@@ -21,14 +20,13 @@ engine_future = {'future': True} if tuple(int(v) for v in sa.__version__.split('
 
 from pg_sync_roles import sync_roles, DatabaseConnect, Login, RoleMembership
 
+
 # By 4000 roles having permission to something, we get "row is too big" errors, so it's a good
 # number to test on to make sure we don't hit that issue
 ROLES_PER_TEST = 4000
 
-
 # The default/root database that comes with the PostgreSQL Docker image
 ROOT_DATABASE_NAME = 'postgres'
-
 
 # We make and drop a database in each test to keep them isolated
 TEST_DATABASE_NAME = 'pg_sync_roles_test'
