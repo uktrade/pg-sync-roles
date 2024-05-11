@@ -349,6 +349,23 @@ def test_login_with_valid_until_initialy_future_but_changed_to_be_in_the_past_ca
         engine.connect()
 
 
+def test_login_with_with_connect_then_revoked_cannot_connect(test_engine):
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+        ))
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with pytest.raises(sa.exc.OperationalError, match='User does not have CONNECT privilege'):
+        engine.connect()
+
+
 def test_login_cannot_connect_with_old_password(test_engine):
     role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
