@@ -117,6 +117,11 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             valid_until=sql.Literal(login.valid_until.isoformat()),
         ))
 
+    def revoke_login(role_name):
+        execute_sql(sql.SQL('ALTER ROLE {role_name} WITH NOLOGIN PASSWORD NULL').format(
+            role_name=sql.Identifier(role_name),
+        ))
+
     def grant_memberships(memberships, role_name):
         if not memberships:
             return
@@ -165,9 +170,10 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         database_connect_memberships_needed = tuple(role for role in database_connect_roles.values() if role not in memberships)
         role_memberships_needed = tuple(role_membership for role_membership in role_memberships if role_membership.role_name not in memberships)
 
-        # And if the role can login / its login status is to be added
+        # And if the role can login / its login status is to be changed
         can_login, valid_until = get_can_login_valid_until(role_name) if not role_needed else (False, None)
         logins_needed = logins and (not can_login or valid_until != logins[0].valid_until or logins[0].password is not None)
+        logins_to_revoke = not logins and can_login
 
         # And any memberships to revoke
         memberships_to_revoke = memberships \
@@ -180,6 +186,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             and not database_connect_roles_needed
             and not database_connect_memberships_needed
             and not logins_needed
+            and not logins_to_revoke
             and not role_memberships_needed
             and not memberships_to_revoke
         ):
@@ -207,6 +214,9 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         logins_needed = logins and (not can_login or valid_until != logins[0].valid_until or logins[0].password is not None)
         if logins_needed:
             grant_login(role_name, logins[0])
+        logins_to_revoke = not logins and can_login
+        if logins_to_revoke:
+            revoke_login(role_name)
 
         # Grant memberships if we need to
         memberships = set(get_memberships(role_name)) if not role_needed else set()
