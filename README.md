@@ -9,7 +9,7 @@ Python utility function to ensure that a PostgreSQL role has certain permissions
 
 - Transparently handles high numbers of permissions - avoiding "row is too big" errors.
 - Locks where necessary - working around "tuple concurrently updated" or "tuple concurrently deleted" errors that can happen when permission changes are performed concurrently.
-- Optionally removes permissions from roles.
+- Automatically revokes permissions from roles not explicitly granted.
 - Handles database connect, schema usage, table select permissions, and role memberships - typically useful when using PostgreSQL as a data warehouse with a high number of users that need granular permissions.
 
 
@@ -24,7 +24,7 @@ pip install pg-sync-roles psycopg
 
 ## Usage
 
-To give a user CONNECT privileges on a database, as well as membership of role:
+To give a user CONNECT on a database, as well as membership of role:
 
 ```python
 from pg_sync_roles import Login, DatabaseConnect, RoleMembership, sync_roles
@@ -47,7 +47,7 @@ with engine.connect() as conn:
     )
 ```
 
-A more complex example, where permissions and memberships are granted, but also any existing permissions not passed are revoked:
+Or to give a use SELECT on a table, USAGE on a schema, membersip of a role, and ownership of a schema:
 
 ```python
 from pg_sync_roles import (
@@ -69,13 +69,6 @@ with engine.connect() as conn:
             SchemaUsage('my_schema'),
             RoleMembership('my_other_role'),
             SchemaOwnership('my_other_schema', create_if_not_exists=True),
-        ),
-        # Revokes all table select, schema usage, and role memberships
-        # that are not not passed via the grants parameter
-        revokes=(
-            TableSelect,
-            SchemaUsage,
-            RoleMembership,
         ),
     )
 ```
