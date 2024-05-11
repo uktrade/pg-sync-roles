@@ -68,7 +68,7 @@ with engine.connect() as conn:
             TableSelect('my_schema', 'my_table'),
             SchemaUsage('my_schema'),
             RoleMembership('my_other_role'),
-            SchemaOwnership('my_other_schema', create_if_not_exists=True),
+            SchemaOwnership('my_other_schema'),
         ),
     )
 ```
