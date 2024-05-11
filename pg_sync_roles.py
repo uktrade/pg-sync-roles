@@ -156,18 +156,20 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         # Find if we need to make the role
         role_needed = not get_role_exists(role_name)
 
-        # Or the database connect roles
+        # And the database connect roles
         database_connect_roles = get_database_connect_roles(database_connects)
         database_connect_roles_needed = keys_with_none_value(database_connect_roles)
 
-        # Or any memberships of the database connect roles or explicitly requested role memberships
+        # And any memberships of the database connect roles or explicitly requested role memberships
         memberships = set(get_memberships(role_name)) if not role_needed else set()
         database_connect_memberships_needed = tuple(role for role in database_connect_roles.values() if role not in memberships)
         role_memberships_needed = tuple(role_membership for role_membership in role_memberships if role_membership.role_name not in memberships)
 
+        # And if the role can login / its login status is to be added
         can_login, valid_until = get_can_login_valid_until(role_name) if not role_needed else (False, None)
         logins_needed = logins and (not can_login or valid_until != logins[0].valid_until or logins[0].password is not None)
 
+        # And any memberships to revoke
         memberships_to_revoke = memberships \
             - set(role_membership.role_name for role_membership in role_memberships) \
             - set(role for role in database_connect_roles.values())
@@ -200,6 +202,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             grant_connect(database_name, database_connect_role)
             database_connect_roles[database_name] = database_connect_role
 
+        # Grant login if we need to
         can_login, valid_until = get_can_login_valid_until(role_name)
         logins_needed = logins and (not can_login or valid_until != logins[0].valid_until or logins[0].password is not None)
         if logins_needed:
