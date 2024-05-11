@@ -406,11 +406,11 @@ def test_login_wrapt_can_connect(test_engine, monkeypatch):
         monkeypatch.setattr(psycopg2.extensions, 'register_type', dummy_register_type)
 
     try:
-        import pyscopg
+        import psycopg
     except ImportError:
         pass
     else:
-        monkeypatch.setattr(pyscopg, 'connect', functools.partial(wrapped_connect, psycopg.connect))
+        monkeypatch.setattr(psycopg, 'connect', functools.partial(wrapped_connect, psycopg.connect))
 
     # We arbitrarily check any usage of sync_roles
     role_name = get_test_role()
