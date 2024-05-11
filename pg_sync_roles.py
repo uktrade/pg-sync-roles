@@ -125,6 +125,14 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             role_name=sql.Identifier(role_name),
         ))
 
+    def revoke_memberships(memberships, role_name):
+        if not memberships:
+            return
+        execute_sql(sql.SQL('REVOKE {memberships} FROM {role_name}').format(
+            memberships=sql.SQL(',').join(sql.Identifier(membership) for membership in memberships),
+            role_name=sql.Identifier(role_name),
+        ))
+
     def keys_with_none_value(d):
         return tuple(key for key, value in d.items() if value is None)
 
@@ -160,8 +168,19 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         can_login, valid_until = get_can_login_valid_until(role_name) if not role_needed else (False, None)
         logins_needed = logins and (not can_login or valid_until != logins[0].valid_until or logins[0].password is not None)
 
+        memberships_to_revoke = memberships \
+            - set(role_membership.role_name for role_membership in role_memberships) \
+            - set(role for role in database_connect_roles.values())
+
         # If we don't need to do anything, we're done.
-        if not role_needed and not database_connect_roles_needed and not database_connect_memberships_needed and not logins_needed and not role_memberships_needed:
+        if (
+            not role_needed
+            and not database_connect_roles_needed
+            and not database_connect_memberships_needed
+            and not logins_needed
+            and not role_memberships_needed
+            and not memberships_to_revoke
+        ):
             return
 
         # But If we do need to make changes, lock, and then re-check everything
@@ -194,3 +213,9 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             if not get_role_exists(membership.role_name):
                 create_role(membership.role_name)
         grant_memberships(database_connect_memberships_needed + tuple(membership.role_name for membership in role_memberships), role_name)
+
+        # Revoke memberships if we need to
+        memberships_to_revoke = memberships \
+            - set(role_membership.role_name for role_membership in role_memberships) \
+            - set(role for role in database_connect_roles.values())
+        revoke_memberships(memberships_to_revoke, role_name)
