@@ -26,9 +26,11 @@ class Login:
     valid_until: datetime = None
     password: str = None
 
+
 @dataclass(frozen=True)
 class RoleMembership:
     role_name: str
+
 
 def sync_roles(conn, role_name, grants=(), lock_key=1):
     def execute_sql(sql_obj):
