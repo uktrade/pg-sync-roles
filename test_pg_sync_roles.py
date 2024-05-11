@@ -19,7 +19,7 @@ except ImportError:
 
 engine_future = {'future': True} if tuple(int(v) for v in sa.__version__.split('.')) < (2, 0, 0) else {}
 
-from pg_sync_roles import sync_roles, DatabaseConnect, Login, RoleMembership
+from pg_sync_roles import sync_roles, DatabaseConnect, SchemaUsage, TableSelect, Login, RoleMembership
 
 
 # By 4000 roles having permission to something, we get "row is too big" errors, so it's a good
@@ -87,6 +87,22 @@ def test_engine(root_engine):
     with root_engine.connect() as conn:
         conn.execution_options(isolation_level='AUTOCOMMIT')
         drop_database_if_exists(conn)
+
+
+@pytest.fixture()
+def test_table(test_engine):
+    schema_name = 'test_schema_' + uuid.uuid4().hex
+    table_name = 'test_table_' + uuid.uuid4().hex
+
+    with test_engine.begin() as conn:
+        conn.execute(sa.text(f'CREATE SCHEMA {schema_name}'))
+        conn.execute(sa.text(f'CREATE TABLE {schema_name}.{table_name} (id int)'))
+    
+    yield schema_name, table_name
+
+    with test_engine.begin() as conn:
+        conn.execute(sa.text(f'DROP TABLE IF EXISTS {schema_name}.{table_name}'))
+        conn.execute(sa.text(f'DROP SCHEMA IF EXISTS {schema_name}'))
 
 
 def test_many_roles_with_database_connect_does_not_raise_exception(test_engine):
@@ -546,3 +562,20 @@ def test_role_membership_revoked(test_engine):
         sync_roles(conn, role_name)
 
         assert not is_member(conn, role_name, TEST_BASE_ROLE)
+
+
+def test_table_select_granted(test_engine, test_table):
+    schema_name, table_name = test_table
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaUsage(schema_name),
+            TableSelect(schema_name, table_name),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with engine.connect() as conn:
+        assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0

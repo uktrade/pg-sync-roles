@@ -22,6 +22,17 @@ class DatabaseConnect:
 
 
 @dataclass(frozen=True)
+class SchemaUsage:
+    schema_name: str
+
+
+@dataclass(frozen=True)
+class TableSelect:
+    schema_name: str
+    table_name: str
+
+
+@dataclass(frozen=True)
 class Login:
     valid_until: datetime = None
     password: str = None
@@ -53,6 +64,39 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
     def lock():
         execute_sql(sql.SQL("SELECT pg_advisory_xact_lock({lock_key})").format(lock_key=sql.Literal(lock_key)))
 
+    def get_databases_that_exist(database_connects):
+        if not database_connects:
+            return []
+        return execute_sql(sql.SQL('SELECT datname FROM pg_database WHERE datname IN ({databases})').format(
+            databases=sql.SQL(',').join(
+                sql.Literal(database_connect.database_name) for database_connect in database_connects
+            )
+        )).fetchall()
+
+    def get_schemas_that_exist(schema_usages):
+        if not schema_usages:
+            return []
+        return execute_sql(sql.SQL('SELECT nspname FROM pg_namespace WHERE nspname IN ({schemas})').format(
+            schemas=sql.SQL(',').join(
+                sql.Literal(schema_usage.schema_name) for schema_usage in schema_usages
+            )
+        )).fetchall()
+
+    def get_tables_that_exist(table_selects):
+        if not table_selects:
+            return []
+        return execute_sql(sql.SQL('''
+            SELECT nspname, relname
+            FROM pg_class c
+            INNER JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE (nspname, relname) IN ({tables})
+        ''').format(
+            tables=sql.SQL(',').join(
+                sql.SQL('({},{})').format(sql.Literal(table_select.schema_name), sql.Literal(table_select.table_name))
+                for table_select in table_selects
+            )
+        )).fetchall()
+
     def get_role_exists(role_name):
         return execute_sql(sql.SQL("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = {role_name})").format(
             role_name=sql.Literal(role_name),
@@ -82,6 +126,59 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             for database_name, role_name in database_name_role_names
         }
 
+    def get_schema_usage_roles(schema_usages):
+        schema_name_role_names = \
+            [] if not schema_usages else \
+            execute_sql(sql.SQL("""
+                SELECT schema_name, grantee::regrole
+                FROM (
+                    VALUES {schema_names}
+                ) sc(schema_name)
+                LEFT JOIN (
+                    SELECT nspname, grantee
+                    FROM pg_namespace, aclexplode(nspacl)
+                    WHERE grantee::regrole::text LIKE '\\_pgsr\\_schema\\_usage\\_%'
+                    AND privilege_type = 'USAGE'
+                ) grantees ON grantees.nspname = sc.schema_name
+            """).format(schema_names=sql.SQL(',').join(
+                sql.SQL('({})').format(sql.Literal(schema_usage.schema_name))
+                for schema_usage in schema_usages
+            ))).fetchall()
+
+        return {
+            schema_name: role_name
+            for schema_name, role_name in schema_name_role_names
+        }
+
+    def get_table_select_roles(table_selects):
+        tables_role_names = \
+            [] if not table_selects else \
+            execute_sql(sql.SQL("""
+                SELECT tb.schema_name, tb.table_name, grantee::regrole
+                FROM (
+                    VALUES {tables}
+                ) tb(schema_name, table_name)
+                LEFT JOIN (
+                    SELECT nspname AS schema_name, relname AS table_name, grantee
+                    FROM pg_class
+                    INNER JOIN pg_namespace ON pg_namespace.oid = pg_namespace.oid
+                    CROSS JOIN aclexplode(relacl)
+                    WHERE grantee::regrole::text LIKE '\\_pgsr\\_table\\_select\\_%'
+                    AND privilege_type = 'SELECT'
+                ) grantees ON grantees.schema_name = tb.schema_name AND grantees.table_name = tb.table_name
+            """).format(tables=sql.SQL(',').join(
+                sql.SQL('({},{})').format(
+                    sql.Literal(table_select.schema_name),
+                    sql.Literal(table_select.table_name),
+                )
+                for table_select in table_selects
+            ))).fetchall()
+
+        return {
+            (schema_name, table_name): role_name
+            for schema_name, table_name, role_name in tables_role_names
+        }
+
     def get_memberships(role_name):
         membership_rows = execute_sql(sql.SQL('SELECT roleid::regrole FROM pg_auth_members WHERE member={role_name}::regrole').format(
             role_name=sql.Literal(role_name)
@@ -96,9 +193,9 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             SELECT rolcanlogin, rolvaliduntil FROM pg_roles WHERE rolname={role_name} LIMIT 1'''
         ).format(role_name=sql.Literal(role_name))).fetchall()[0]
 
-    def get_available_database_connect_role():
+    def get_available_acl_role(base):
         for _ in range(0, 10):
-            database_connect_role = '_pgsr_database_connect_' + uuid4().hex[:8]
+            database_connect_role = base + uuid4().hex[:8]
             if not get_role_exists(database_connect_role):
                 return database_connect_role
 
@@ -107,6 +204,19 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
     def grant_connect(database_name, role_name):
         execute_sql(sql.SQL('GRANT CONNECT ON DATABASE {database_name} TO {role_name}').format(
             database_name=sql.Identifier(database_name),
+            role_name=sql.Identifier(role_name),
+        ))
+
+    def grant_usage(schema_name, role_name):
+        execute_sql(sql.SQL('GRANT USAGE ON SCHEMA {schema_name} TO {role_name}').format(
+            schema_name=sql.Identifier(schema_name),
+            role_name=sql.Identifier(role_name),
+        ))
+
+    def grant_select(schema_name, table_name, role_name):
+        execute_sql(sql.SQL('GRANT SELECT ON TABLE {schema_name}.{table_name} TO {role_name}').format(
+            schema_name=sql.Identifier(schema_name),
+            table_name=sql.Identifier(table_name),
             role_name=sql.Identifier(role_name),
         ))
 
@@ -150,6 +260,8 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 
     # Split grants by their type
     database_connects = tuple(grant for grant in grants if isinstance(grant, DatabaseConnect))
+    schema_usages = tuple(grant for grant in grants if isinstance(grant, SchemaUsage))
+    table_selects = tuple(grant for grant in grants if isinstance(grant, TableSelect))
     logins = tuple(grant for grant in grants if isinstance(grant, Login))
     role_memberships = tuple(grant for grant in grants if isinstance(grant, RoleMembership))
 
@@ -158,16 +270,30 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         raise ValueError('At most 1 Login object can be passed via the grants parameter')
 
     with transaction():
+        # Filter out databases and tables that don't exist
+        databases_that_exist = set(get_databases_that_exist(database_connects))
+        database_connects = tuple(database_connect for database_connect in database_connects if (database_connect.database_name,) in databases_that_exist)
+        schemas_that_exist = set(get_schemas_that_exist(schema_usages))
+        schema_usages = tuple(schema_usage for schema_usage in schema_usages if (schema_usage.schema_name,) in schemas_that_exist)
+        tables_that_exist = set(get_tables_that_exist(table_selects))
+        table_selects = tuple(table_select for table_select in table_selects if (table_select.schema_name, table_select.table_name) in tables_that_exist)
+
         # Find if we need to make the role
         role_needed = not get_role_exists(role_name)
 
-        # And the database connect roles
+        # And the ACL-equivalent roles
         database_connect_roles = get_database_connect_roles(database_connects)
         database_connect_roles_needed = keys_with_none_value(database_connect_roles)
+        schema_usage_roles = get_schema_usage_roles(schema_usages)
+        schema_usage_roles_needed = keys_with_none_value(schema_usage_roles)
+        table_select_roles = get_table_select_roles(table_selects)
+        table_select_roles_needed = keys_with_none_value(table_select_roles)
 
         # And any memberships of the database connect roles or explicitly requested role memberships
         memberships = set(get_memberships(role_name)) if not role_needed else set()
         database_connect_memberships_needed = tuple(role for role in database_connect_roles.values() if role not in memberships)
+        schema_usage_memberships_needed = tuple(role for role in schema_usage_roles.values() if role not in memberships)
+        table_select_memberships_needed = tuple(role for role in table_select_roles.values() if role not in memberships)
         role_memberships_needed = tuple(role_membership for role_membership in role_memberships if role_membership.role_name not in memberships)
 
         # And if the role can login / its login status is to be changed
@@ -178,17 +304,22 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         # And any memberships to revoke
         memberships_to_revoke = memberships \
             - set(role_membership.role_name for role_membership in role_memberships) \
-            - set(role for role in database_connect_roles.values())
+            - set(role for role in database_connect_roles.values()) \
+            - set(role for role in table_select_roles.values())
 
         # If we don't need to do anything, we're done.
         if (
             not role_needed
             and not database_connect_roles_needed
+            and not schema_usage_roles_needed
+            and not table_select_roles_needed
             and not database_connect_memberships_needed
-            and not logins_needed
-            and not logins_to_revoke
+            and not schema_usage_memberships_needed
+            and not table_select_memberships_needed
             and not role_memberships_needed
             and not memberships_to_revoke
+            and not logins_needed
+            and not logins_to_revoke
         ):
             return
 
@@ -204,10 +335,28 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         database_connect_roles = get_database_connect_roles(database_connects)
         database_connect_roles_needed = keys_with_none_value(database_connect_roles)
         for database_name in database_connect_roles_needed:
-            database_connect_role = get_available_database_connect_role()
+            database_connect_role = get_available_acl_role('_pgsr_database_connect_')
             create_role(database_connect_role)
             grant_connect(database_name, database_connect_role)
             database_connect_roles[database_name] = database_connect_role
+
+        # Create schema usage roles if we need to
+        schema_usage_roles = get_schema_usage_roles(schema_usages)
+        schema_usage_roles_needed = keys_with_none_value(schema_usage_roles)
+        for schema_name in schema_usage_roles_needed:
+            schema_usage_role = get_available_acl_role('_pgsr_schema_usage_')
+            create_role(schema_usage_role)
+            grant_usage(schema_name, schema_usage_role)
+            schema_usage_roles[schema_name] = schema_usage_role
+
+        # Create table select roles if we need to
+        table_select_roles = get_table_select_roles(table_selects)
+        table_select_roles_needed = keys_with_none_value(table_select_roles)
+        for schema_name, table_name in table_select_roles_needed:
+            table_select_role = get_available_acl_role('_pgsr_table_select_')
+            create_role(table_select_role)
+            grant_select(schema_name, table_name, table_select_role)
+            table_select_roles[(schema_name, table_name)] = table_select_role
 
         # Grant login if we need to
         can_login, valid_until = get_can_login_valid_until(role_name)
@@ -221,14 +370,22 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         # Grant memberships if we need to
         memberships = set(get_memberships(role_name)) if not role_needed else set()
         database_connect_memberships_needed = tuple(role for role in database_connect_roles.values() if role not in memberships)
+        table_select_memberships_needed = tuple(role for role in table_select_roles.values() if role not in memberships)
+        schema_usage_memberships_needed = tuple(role for role in schema_usage_roles.values() if role not in memberships)
         role_memberships_needed = tuple(role_membership for role_membership in role_memberships if role_membership.role_name not in memberships)
         for membership in role_memberships_needed:
             if not get_role_exists(membership.role_name):
                 create_role(membership.role_name)
-        grant_memberships(database_connect_memberships_needed + tuple(membership.role_name for membership in role_memberships), role_name)
+        grant_memberships(database_connect_memberships_needed \
+            + schema_usage_memberships_needed \
+            + table_select_memberships_needed \
+            + tuple(membership.role_name for membership in role_memberships),
+        role_name)
 
         # Revoke memberships if we need to
         memberships_to_revoke = memberships \
             - set(role_membership.role_name for role_membership in role_memberships) \
-            - set(role for role in database_connect_roles.values())
+            - set(role for role in database_connect_roles.values()) \
+            - set(role for role in schema_usage_roles.values()) \
+            - set(role for role in table_select_roles.values())
         revoke_memberships(memberships_to_revoke, role_name)
