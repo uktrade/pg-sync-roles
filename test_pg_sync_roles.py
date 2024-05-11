@@ -564,7 +564,93 @@ def test_role_membership_revoked(test_engine):
         assert not is_member(conn, role_name, TEST_BASE_ROLE)
 
 
-def test_table_select_granted(test_engine, test_table):
+def test_table_select_never_granted_cannot_query(test_engine, test_table):
+    schema_name, table_name = test_table
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaUsage(schema_name),
+            TableSelect(schema_name, table_name),
+        ))
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaUsage(schema_name),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with engine.connect() as conn:
+        with pytest.raises(sa.exc.ProgrammingError, match='permission denied for (table|relation)'):
+            assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
+
+
+def test_table_select_granted_then_revoked_cannot_query(test_engine, test_table):
+    schema_name, table_name = test_table
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaUsage(schema_name),
+            TableSelect(schema_name, table_name),
+        ))
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaUsage(schema_name),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with engine.connect() as conn:
+        with pytest.raises(sa.exc.ProgrammingError, match='permission denied for (table|relation)'):
+            assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
+
+
+def test_table_select_usage_never_granted_cannot_query(test_engine, test_table):
+    schema_name, table_name = test_table
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            TableSelect(schema_name, table_name),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with engine.connect() as conn:
+        with pytest.raises(sa.exc.ProgrammingError, match='permission denied for schema'):
+            assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
+
+
+def test_table_select_granted_then_usage_revoked_cannot_query(test_engine, test_table):
+    schema_name, table_name = test_table
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaUsage(schema_name),
+            TableSelect(schema_name, table_name),
+        ))
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            TableSelect(schema_name, table_name),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with engine.connect() as conn:
+        with pytest.raises(sa.exc.ProgrammingError, match='permission denied for schema'):
+            assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
+
+
+def test_table_select_granted_can_query(test_engine, test_table):
     schema_name, table_name = test_table
     role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
