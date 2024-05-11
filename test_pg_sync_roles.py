@@ -34,6 +34,10 @@ TEST_DATABASE_NAME = 'pg_sync_roles_test'
 TEST_BASE_ROLE = 'test_pgsr_base_role'
 
 
+def get_test_role():
+    return 'test_' + uuid.uuid4().hex
+
+
 def is_member(conn, child_role_name, parent_role_name):
     query = f'''
         SELECT EXISTS (
@@ -94,7 +98,7 @@ def test_many_roles_with_database_connect_does_not_raise_exception(test_engine):
 
 
 def test_if_cannot_choose_database_role_name_runtime_exception_raised(test_engine, monkeypatch):
-    role_name = 'test_' + uuid.uuid4().hex
+    role_name = get_test_role()
     mock_hex = 'abcdefgh'
     monkeypatch.setattr(uuid.UUID, 'hex', mock_hex)
 
@@ -109,7 +113,7 @@ def test_if_cannot_choose_database_role_name_runtime_exception_raised(test_engin
 
 
 def test_database_connect_does_not_accumulate_roles(test_engine):
-    role_name = 'test_' + uuid.uuid4().hex
+    role_name = get_test_role()
 
     with \
             test_engine.connect() as conn_test, \
@@ -148,7 +152,7 @@ def test_database_connect_does_not_accumulate_roles(test_engine):
     (RoleMembership(TEST_BASE_ROLE),),
 ])
 def test_initial_grant_takes_lock(test_engine, grants):
-    role_name = 'test_' + uuid.uuid4().hex
+    role_name = get_test_role()
     got_lock = threading.Event()
     num_blocked = 0
 
@@ -188,7 +192,7 @@ def test_initial_grant_takes_lock(test_engine, grants):
     (RoleMembership(TEST_BASE_ROLE),),
 ])
 def test_identical_grant_does_not_take_lock(test_engine, grants):
-    role_name = 'test_' + uuid.uuid4().hex
+    role_name = get_test_role()
 
     done = threading.Event()
 
@@ -224,7 +228,7 @@ def test_identical_grant_does_not_take_lock(test_engine, grants):
     (RoleMembership(TEST_BASE_ROLE),),
 ])
 def test_lock_can_timeout_and_connection_is_usable(test_engine, grants):
-    role_name = 'test_' + uuid.uuid4().hex
+    role_name = get_test_role()
 
     with \
             test_engine.connect() as conn_test, \
@@ -242,7 +246,7 @@ def test_lock_can_timeout_and_connection_is_usable(test_engine, grants):
 
 
 def test_sync_role_for_one_user(test_engine):
-    role_name = 'test_' + uuid.uuid4().hex
+    role_name = get_test_role()
     database_query = f'''
             SELECT has_database_privilege('{role_name}', '{TEST_DATABASE_NAME}', 'CONNECT')
         '''
@@ -255,7 +259,7 @@ def test_sync_role_for_one_user(test_engine):
 
 
 def test_login_expired_valid_until_cannot_connect(test_engine):
-    role_name = 'test_' + uuid.uuid4().hex
+    role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) - timedelta(minutes=10)
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
@@ -269,7 +273,7 @@ def test_login_expired_valid_until_cannot_connect(test_engine):
 
 
 def test_login_incorrect_password_cannot_connect(test_engine):
-    role_name = 'test_' + uuid.uuid4().hex
+    role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
@@ -283,8 +287,8 @@ def test_login_incorrect_password_cannot_connect(test_engine):
 
 
 def test_login_is_only_applied_to_passed_role(test_engine):
-    role_name_with_login = 'test_' + uuid.uuid4().hex
-    role_name_without_login = 'test_' + uuid.uuid4().hex
+    role_name_with_login = get_test_role()
+    role_name_without_login = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
     with test_engine.connect() as conn:
         sync_roles(conn, role_name_with_login, grants=(
@@ -301,7 +305,7 @@ def test_login_is_only_applied_to_passed_role(test_engine):
 
 
 def test_login_without_database_connect_cannot_connect(test_engine):
-    role_name = 'test_' + uuid.uuid4().hex
+    role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
@@ -314,7 +318,7 @@ def test_login_without_database_connect_cannot_connect(test_engine):
 
 
 def test_login_with_different_database_connect_cannot_connect(test_engine):
-    role_name = 'test_' + uuid.uuid4().hex
+    role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
@@ -328,7 +332,7 @@ def test_login_with_different_database_connect_cannot_connect(test_engine):
 
 
 def test_login_with_valid_until_initialy_future_but_changed_to_be_in_the_past_cannot_connect(test_engine):
-    role_name = 'test_' + uuid.uuid4().hex
+    role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
@@ -346,7 +350,7 @@ def test_login_with_valid_until_initialy_future_but_changed_to_be_in_the_past_ca
 
 
 def test_login_cannot_connect_with_old_password(test_engine):
-    role_name = 'test_' + uuid.uuid4().hex
+    role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
@@ -364,7 +368,7 @@ def test_login_cannot_connect_with_old_password(test_engine):
 
 
 def test_login_can_connect(test_engine):
-    role_name = 'test_' + uuid.uuid4().hex
+    role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
@@ -409,7 +413,7 @@ def test_login_wrapt_can_connect(test_engine, monkeypatch):
         monkeypatch.setattr(pyscopg, 'connect', functools.partial(wrapped_connect, psycopg.connect))
 
     # We arbitrarily check any usage of sync_roles
-    role_name = 'test_' + uuid.uuid4().hex
+    role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
 
     with test_engine.connect() as conn:
@@ -424,7 +428,7 @@ def test_login_wrapt_can_connect(test_engine, monkeypatch):
 
 
 def test_login_can_connect_after_second_sync_by_no_password(test_engine):
-    role_name = 'test_' + uuid.uuid4().hex
+    role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
@@ -442,7 +446,7 @@ def test_login_can_connect_after_second_sync_by_no_password(test_engine):
 
 
 def test_multiple_login_raises_value_error(test_engine):
-    role_name = 'test_' + uuid.uuid4().hex
+    role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
     with test_engine.connect() as conn:
         with pytest.raises(ValueError):
@@ -453,7 +457,7 @@ def test_multiple_login_raises_value_error(test_engine):
 
 
 def test_role_membership_in_one_step(test_engine):
-    role_name = 'test_' + uuid.uuid4().hex
+    role_name = get_test_role()
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
             RoleMembership(TEST_BASE_ROLE),
@@ -462,7 +466,7 @@ def test_role_membership_in_one_step(test_engine):
 
 
 def test_role_membership_in_multiple_steps(test_engine):
-    role_name = 'test_' + uuid.uuid4().hex
+    role_name = get_test_role()
     with test_engine.connect() as conn:
         sync_roles(conn, role_name)
         sync_roles(conn, role_name, grants=(
@@ -472,8 +476,8 @@ def test_role_membership_in_multiple_steps(test_engine):
 
 
 def test_role_membership_only_granted_to_passed_role(test_engine):
-    role_name_1 = 'test_' + uuid.uuid4().hex
-    role_name_2 = 'test_' + uuid.uuid4().hex
+    role_name_1 = get_test_role()
+    role_name_2 = get_test_role()
     with test_engine.connect() as conn:
         sync_roles(conn, role_name_1)
         sync_roles(conn, role_name_2, grants=(
@@ -485,8 +489,8 @@ def test_role_membership_only_granted_to_passed_role(test_engine):
 
 
 def test_role_membership_only_granted_to_multiple_roles(test_engine):
-    role_name_1 = 'test_' + uuid.uuid4().hex
-    role_name_2 = 'test_' + uuid.uuid4().hex
+    role_name_1 = get_test_role()
+    role_name_2 = get_test_role()
     with test_engine.connect() as conn:
         sync_roles(conn, role_name_1, grants=(
             RoleMembership(TEST_BASE_ROLE),
