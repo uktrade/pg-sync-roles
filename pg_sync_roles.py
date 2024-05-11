@@ -102,7 +102,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             if not get_role_exists(database_connect_role):
                 return database_connect_role
 
-        raise Exception('Unable to find available role name')
+        raise RuntimeError('Unable to find available role name')
 
     def grant_connect(database_name, role_name):
         execute_sql(sql.SQL('GRANT CONNECT ON DATABASE {database_name} TO {role_name}').format(
