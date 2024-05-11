@@ -123,6 +123,7 @@ def test_database_connect_does_not_accumulate_roles(test_engine):
 
 
 @pytest.mark.parametrize('grants', [
+    (),
     (Login(valid_until=datetime(2000,1,1, tzinfo=timezone.utc)),),
     (DatabaseConnect(TEST_DATABASE_NAME),),
     (RoleMembership(TEST_BASE_ROLE),),
@@ -162,6 +163,7 @@ def test_initial_grant_takes_lock(test_engine, grants):
 
 
 @pytest.mark.parametrize('grants', [
+    (),
     (Login(valid_until=datetime(2000,1,1, tzinfo=timezone.utc)),),
     (DatabaseConnect(TEST_DATABASE_NAME),),
     (RoleMembership(TEST_BASE_ROLE),),
