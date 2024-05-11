@@ -80,7 +80,7 @@ def test_many_roles_with_database_connect_does_not_raise_exception(test_engine):
     with test_engine.connect() as conn:
         for role_name in (uuid.uuid4().hex for _ in range(0, ROLES_PER_TEST)):
             sync_roles(conn, role_name, grants=(
-                DatabaseConnect('postgres'),
+                DatabaseConnect(TEST_DATABASE_NAME),
             ))
 
 
