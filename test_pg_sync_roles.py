@@ -452,3 +452,18 @@ def test_role_membership_only_granted_to_passed_role(test_engine):
 
         assert not is_member(conn, role_name_1, TEST_BASE_ROLE)
         assert is_member(conn, role_name_2, TEST_BASE_ROLE)
+
+
+def test_role_membership_only_granted_to_multiple_roles(test_engine):
+    role_name_1 = uuid.uuid4().hex
+    role_name_2 = uuid.uuid4().hex
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name_1, grants=(
+            RoleMembership(TEST_BASE_ROLE),
+        ))
+        sync_roles(conn, role_name_2, grants=(
+            RoleMembership(TEST_BASE_ROLE),
+        ))
+
+        assert is_member(conn, role_name_1, TEST_BASE_ROLE)
+        assert is_member(conn, role_name_2, TEST_BASE_ROLE)
