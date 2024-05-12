@@ -90,6 +90,23 @@ pg-sync-roles maintains a role per database perimission, a role per schema pemis
 The names of the roles maintained by pg-sync-roles begin with the prefix `_pgsr_`. Each name ends with a randomly generated unique identifier.
 
 
+## What's revoked
+
+pg-sync-roles tries to be exhaustive when revoking all privileges that aren't asked for. But note that roles are shared over a cluster, and not specific to a single database in a cluster, and so pg-sync-roles will only revoke privileges on shared objects, or those that are in the currently connected database.
+
+In more detail, the `sync_roles` function will revoke:
+
+- The ability to login, create roles, create databases, or being a superuser - these are stored with the role and so shared over the cluster.
+
+- Membership of other roles - these are also shared over a cluster.
+
+- Ownerships of and grants on databases, tablespaces, and parameters - these also shared over a cluster.
+
+- Only on the current database: ownerships of and grants on schemas, tables (including the table-like views, materialized views, partitioned tables and foreign tables), table(-like) columns, sequences, functions, procedures, large objects, types (base, composite, enum, pseudo, range and multirange), domains, languages, foreign-data wrappers, and foreign servers.
+
+  If you wish to revoke privileges on other databases, you will have connect to each database in turn and call `sync_roles` passing its connection.
+
+
 ## Compatibility
 
 pg-sync-roles aims to be compatible with a wide range of Python and other dependencies:
