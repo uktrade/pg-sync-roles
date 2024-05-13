@@ -119,7 +119,7 @@ def test_if_cannot_choose_database_role_name_runtime_exception_raised(test_engin
     monkeypatch.setattr(uuid.UUID, 'hex', mock_hex)
 
     with test_engine.begin() as conn:
-        conn.execute(sa.text('CREATE ROLE _pgsr_database_connect_abcdefgh'))
+        conn.execute(sa.text('CREATE ROLE _pgsr_global_database_connect_abcdefgh'))
 
     with test_engine.connect() as conn:
         with pytest.raises(RuntimeError, match='Unable to find available role name'):
