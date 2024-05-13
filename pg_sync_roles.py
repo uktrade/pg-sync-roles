@@ -2,9 +2,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass, is_dataclass
 from datetime import datetime
 from uuid import uuid4
-
+import logging
+logger = logging.getLogger()
 import sqlalchemy as sa
-
 try:
     from psycopg2 import sql as sql2
 except ImportError:
@@ -202,18 +202,21 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         raise RuntimeError('Unable to find available role name')
 
     def grant_connect(database_name, role_name):
+        logger.info("Granting CONNECT on database %s to role %s", database_name, role_name)
         execute_sql(sql.SQL('GRANT CONNECT ON DATABASE {database_name} TO {role_name}').format(
             database_name=sql.Identifier(database_name),
             role_name=sql.Identifier(role_name),
         ))
 
     def grant_usage(schema_name, role_name):
+        logger.info("Granting USAGE on schema %s to role %s", schema_name, role_name)
         execute_sql(sql.SQL('GRANT USAGE ON SCHEMA {schema_name} TO {role_name}').format(
             schema_name=sql.Identifier(schema_name),
             role_name=sql.Identifier(role_name),
         ))
 
     def grant_select(schema_name, table_name, role_name):
+        logger.info("Granting SELECT on table %s to role %s", table_name, role_name)
         execute_sql(sql.SQL('GRANT SELECT ON TABLE {schema_name}.{table_name} TO {role_name}').format(
             schema_name=sql.Identifier(schema_name),
             table_name=sql.Identifier(table_name),
@@ -221,6 +224,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         ))
 
     def grant_login(role_name, login):
+        logger.info("Granting LOGIN on login %s to role %s", login, role_name)
         execute_sql(sql.SQL('ALTER ROLE {role_name} WITH LOGIN PASSWORD {password} VALID UNTIL {valid_until}').format(
             role_name=sql.Identifier(role_name),
             password=sql.Literal(login.password),
@@ -228,13 +232,16 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         ))
 
     def revoke_login(role_name):
+        logger.info("Revoking LOGIN from role %s", role_name)
         execute_sql(sql.SQL('ALTER ROLE {role_name} WITH NOLOGIN PASSWORD NULL').format(
             role_name=sql.Identifier(role_name),
         ))
 
     def grant_memberships(memberships, role_name):
         if not memberships:
+            logger.info("No memberships granted to %s", role_name)
             return
+        logger.info("Granting memberships %s to role %s", memberships, role_name)
         execute_sql(sql.SQL('GRANT {memberships} TO {role_name}').format(
             memberships=sql.SQL(',').join(sql.Identifier(membership) for membership in memberships),
             role_name=sql.Identifier(role_name),
@@ -242,7 +249,9 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 
     def revoke_memberships(memberships, role_name):
         if not memberships:
+            logger.info("No memberships revoked from %s", role_name)
             return
+        logger.info("Revoking memberships %s from role %s", memberships, role_name)
         execute_sql(sql.SQL('REVOKE {memberships} FROM {role_name}').format(
             memberships=sql.SQL(',').join(sql.Identifier(membership) for membership in memberships),
             role_name=sql.Identifier(role_name),
