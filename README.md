@@ -13,7 +13,7 @@ pg-sync-roles should not be used on roles that should have permissions to multip
 - Transparently handles high numbers of permissions - avoiding "row is too big" errors.
 - Locks where necessary - working around "tuple concurrently updated" or "tuple concurrently deleted" errors that can happen when permission changes are performed concurrently.
 - Automatically revokes permissions from roles not explicitly granted.
-- Handles database connect, schema usage, table select permissions, and role memberships - typically useful when using PostgreSQL as a data warehouse with a high number of users that need granular permissions.
+- Grants (and revokes if not requested) login ability, database connect, schema usage, table select permissions, and role memberships - typically useful when using PostgreSQL as a data warehouse with a high number of users that need granular permissions. Other types of privileges may be added in future versions.
 
 
 ## Installation
