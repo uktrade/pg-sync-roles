@@ -206,11 +206,6 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
     def create_schema(schema_name):
         execute_sql(sql.SQL('CREATE SCHEMA {schema_name};').format(schema_name=sql.Identifier(schema_name)))
 
-    def get_can_login_valid_until(role_name):
-        return execute_sql(sql.SQL('''
-            SELECT rolcanlogin, rolvaliduntil FROM pg_roles WHERE rolname={role_name} LIMIT 1'''
-        ).format(role_name=sql.Literal(role_name))).fetchall()[0]
-
     def get_available_acl_role(base):
         for _ in range(0, 10):
             database_connect_role = base + uuid4().hex[:8]
@@ -353,7 +348,10 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         role_memberships_needed = tuple(role_membership for role_membership in role_memberships if role_membership.role_name not in memberships)
 
         # And if the role can login / its login status is to be changed
-        can_login, valid_until = get_can_login_valid_until(role_name) if not role_needed else (False, None)
+        login_row = next((perm for perm in existing_permissions if perm['on'] == 'cluster' and perm['privilege_type'] == 'LOGIN'), None)
+        can_login = login_row is not None
+
+        valid_until = datetime.strptime(login_row['name_1'], '%Y-%m-%dT%H:%M:%S.%f%z') if login_row is not None else None
         logins_needed = logins and (not can_login or valid_until != logins[0].valid_until or logins[0].password is not None)
         logins_to_revoke = not logins and can_login
 
@@ -432,8 +430,9 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             table_select_roles[(schema_name, table_name)] = table_select_role
 
         # Grant login if we need to
-        can_login, valid_until = get_can_login_valid_until(role_name)
-        logins_needed = logins and (not can_login or valid_until != logins[0].valid_until or logins[0].password is not None)
+        login_row = next((perm for perm in existing_permissions if perm['on'] == 'cluster' and perm['privilege_type'] == 'LOGIN'), None)
+        can_login = login_row is not None
+        valid_until = datetime.strptime(login_row['name_1'], '%Y-%m-%dT%H:%M:%S.%f%z') if login_row is not None else None
         if logins_needed:
             grant_login(role_name, logins[0])
         logins_to_revoke = not logins and can_login
@@ -469,6 +468,23 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 # a touch over-engineered for what it does right now
 # Based on the queries at at https://stackoverflow.com/a/78466268/1319998
 _EXISTING_PERMISSIONS_SQL = '''
+-- Cluster permissions not "on" anything else
+SELECT
+  'cluster' AS on,
+  CASE WHEN privilege_type = 'LOGIN' AND rolvaliduntil IS NOT NULL THEN to_char(rolvaliduntil AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US+00:00') END AS name_1,
+  NULL AS name_2,
+  NULL AS name_3,
+  privilege_type
+FROM pg_roles, unnest(
+  CASE WHEN rolcanlogin THEN ARRAY['LOGIN'] ELSE ARRAY[]::text[] END
+    || CASE WHEN rolsuper THEN ARRAY['SUPERUSER'] ELSE ARRAY[]::text[] END
+    || CASE WHEN rolcreaterole THEN ARRAY['CREATE ROLE'] ELSE ARRAY[]::text[] END
+    || CASE WHEN rolcreatedb THEN ARRAY['CREATE DATABASE'] ELSE ARRAY[]::text[] END
+) AS p(privilege_type)
+WHERE oid = quote_ident({role_name})::regrole
+
+UNION ALL
+
 -- Direct role memberships
 SELECT 'role' AS on, rolname AS name_1, NULL AS name_2, NULL AS name_3, 'MEMBER' AS privilege_type
 FROM pg_auth_members m
