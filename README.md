@@ -15,6 +15,7 @@ pg-sync-roles should not be used on roles that should have permissions to multip
 - [Features](#features)
 - [Installation](#installation)
 - [Usage](#usage)
+- [API](#api)
 - [Locking](#locking)
 - [Under the hood](#under-the-hood)
 - [Compatibility](#compatibility)
@@ -97,6 +98,44 @@ with engine.connect() as conn:
         ),
     )
 ```
+
+
+## API
+
+### Core function
+
+#### `sync_roles(conn, role_name, grants=(), lock_key=1)`
+
+- `conn`
+
+   A SQLAlchemy connection with an engine of dialect `postgresql+psycopg` or `postgresql+psycopg2`. For SQLAlchemy < 2 `future=True` must be passed to its create_engine function.
+
+- `role_name`
+
+   The role name to grant and revoke permissions and role memberships from. If the role does not exist it will be automatically created.
+
+- `grants=()`
+
+   A tuple of grants of all permissions that the role specified by the `role_name` should have. Anything not in this list will be automatically revoked. See [Grant types](#grant-types) for the list of grant types.
+
+- `lock_key=1`
+
+   The key for the advisory lock taken before changes are made. See [Locking](#locking) for more details.
+
+
+### Grant types
+
+#### `Login(password, valid_until)`
+
+#### `DatabaseConnect(database_name)`
+
+#### `SchemaUsage(schema_name)`
+
+#### `TableSelect(schema_name, table_name)`
+
+#### `RoleMembership(role_name)`
+
+#### `SchemaOwnership(schema_name)`
 
 
 ## Locking
