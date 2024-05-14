@@ -27,6 +27,11 @@ class SchemaUsage:
 
 
 @dataclass(frozen=True)
+class SchemaOwnership:
+    schema_name: str
+
+
+@dataclass(frozen=True)
 class TableSelect:
     schema_name: str
     table_name: str
@@ -78,12 +83,12 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             SELECT oid FROM pg_database WHERE datname = current_database()
         ''')).fetchall()[0][0]
 
-    def get_schemas_that_exist(schema_usages):
-        if not schema_usages:
+    def get_schemas_that_exist(schema_names):
+        if not schema_names:
             return []
         return execute_sql(sql.SQL('SELECT nspname FROM pg_namespace WHERE nspname IN ({schemas})').format(
             schemas=sql.SQL(',').join(
-                sql.Literal(schema_usage.schema_name) for schema_usage in schema_usages
+                sql.Literal(schema_name) for schema_name in schema_names
             )
         )).fetchall()
 
@@ -190,6 +195,11 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             for schema_name, table_name, role_name in tables_role_names
         }
 
+    def get_existing_permissions(role_name):
+        return tuple(row._mapping for row in execute_sql(sql.SQL(_EXISTING_PERMISSIONS_SQL).format(
+            role_name=sql.Literal(role_name)
+        )).fetchall())
+
     def get_memberships(role_name):
         membership_rows = execute_sql(sql.SQL('SELECT roleid::regrole FROM pg_auth_members WHERE member={role_name}::regrole').format(
             role_name=sql.Literal(role_name)
@@ -198,6 +208,9 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 
     def create_role(role_name):
         execute_sql(sql.SQL('CREATE ROLE {role_name};').format(role_name=sql.Identifier(role_name)))
+
+    def create_schema(schema_name):
+        execute_sql(sql.SQL('CREATE SCHEMA {schema_name};').format(schema_name=sql.Identifier(schema_name)))
 
     def get_can_login_valid_until(role_name):
         return execute_sql(sql.SQL('''
@@ -234,6 +247,13 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             role_name=sql.Identifier(role_name),
         ))
 
+    def grant_schema_ownership(role_name, schema_name):
+        logger.info("Granting OWNERSHIP on schema %s to role %s", schema_name, role_name)
+        execute_sql(sql.SQL('ALTER SCHEMA {schema_name} OWNER TO {role_name}').format(
+            role_name=sql.Identifier(role_name),
+            schema_name=sql.Identifier(schema_name),
+        ))
+
     def grant_login(role_name, login):
         logger.info("Granting LOGIN on login %s to role %s", login, role_name)
         execute_sql(sql.SQL('ALTER ROLE {role_name} WITH LOGIN PASSWORD {password} VALID UNTIL {valid_until}').format(
@@ -246,6 +266,12 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         logger.info("Revoking LOGIN from role %s", role_name)
         execute_sql(sql.SQL('ALTER ROLE {role_name} WITH NOLOGIN PASSWORD NULL').format(
             role_name=sql.Identifier(role_name),
+        ))
+
+    def revoke_schema_ownership(schema_name):
+        logger.info("Revoking schema ownership of %s from role %s", schema_name, role_name)
+        execute_sql(sql.SQL('ALTER SCHEMA {schema_name} OWNER TO SESSION_USER').format(
+            schema_name=sql.Identifier(schema_name),
         ))
 
     def grant_memberships(memberships, role_name):
@@ -281,9 +307,13 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
     # Split grants by their type
     database_connects = tuple(grant for grant in grants if isinstance(grant, DatabaseConnect))
     schema_usages = tuple(grant for grant in grants if isinstance(grant, SchemaUsage))
+    schema_ownerships = tuple(grant for grant in grants if isinstance(grant, SchemaOwnership))
     table_selects = tuple(grant for grant in grants if isinstance(grant, TableSelect))
     logins = tuple(grant for grant in grants if isinstance(grant, Login))
     role_memberships = tuple(grant for grant in grants if isinstance(grant, RoleMembership))
+
+    # Gather names of related grants (used for example to check if things exist)
+    all_schema_names = tuple(schema_usage.schema_name for schema_usage in schema_usages + schema_ownerships)
 
     # Validation
     if len(logins) > 1:
@@ -293,10 +323,12 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         # Get database OID that are in database-specific role names
         db_oid = get_database_oid()
 
+        # Find existing objects where needed
+        schemas_that_exist = set(get_schemas_that_exist(all_schema_names))
+
         # Filter out databases and tables that don't exist
         databases_that_exist = set(get_databases_that_exist(database_connects))
         database_connects = tuple(database_connect for database_connect in database_connects if (database_connect.database_name,) in databases_that_exist)
-        schemas_that_exist = set(get_schemas_that_exist(schema_usages))
         schema_usages = tuple(schema_usage for schema_usage in schema_usages if (schema_usage.schema_name,) in schemas_that_exist)
         tables_that_exist = set(get_tables_that_exist(table_selects))
         table_selects = tuple(table_select for table_select in table_selects if (table_select.schema_name, table_select.table_name) in tables_that_exist)
@@ -311,6 +343,14 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         schema_usage_roles_needed = keys_with_none_value(schema_usage_roles)
         table_select_roles = get_table_select_roles(db_oid, table_selects)
         table_select_roles_needed = keys_with_none_value(table_select_roles)
+
+        # Get existing ownerships, and those to grant and revoke
+        existing_permissions = get_existing_permissions(role_name) if not role_needed else []
+        existing_schema_ownerships = tuple(perm['name_1'] for perm in existing_permissions if perm['on'] == 'schema')
+        schema_ownership_names_exact = set(schema_ownership.schema_name for schema_ownership in schema_ownerships)
+        schema_names_to_revoke_ownership = tuple(schema_name for schema_name in existing_schema_ownerships if schema_name not in schema_ownership_names_exact)
+        schema_ownerships_to_grant_ownership = tuple(schema_ownership for schema_ownership in schema_ownerships if schema_ownership.schema_name not in existing_schema_ownerships)
+
 
         # And any memberships of the database connect roles or explicitly requested role memberships
         memberships = set(get_memberships(role_name)) if not role_needed else set()
@@ -343,6 +383,8 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             and not memberships_to_revoke
             and not logins_needed
             and not logins_to_revoke
+            and not schema_names_to_revoke_ownership
+            and not schema_ownerships_to_grant_ownership
         ):
             return
 
@@ -353,6 +395,21 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         role_needed = not get_role_exists(role_name)
         if role_needed:
             create_role(role_name)
+
+        # Get existing permissions
+        existing_permissions = get_existing_permissions(role_name)
+
+        # Grant or revoke schema ownerships
+        existing_schema_ownerships = tuple(perm['name_1'] for perm in existing_permissions if perm['on'] == 'schema')
+        schema_ownership_names_exact = set(schema_ownership.schema_name for schema_ownership in schema_ownerships)
+        schema_names_to_revoke_ownership = tuple(schema_name for schema_name in existing_schema_ownerships if schema_name not in schema_ownership_names_exact)
+        schema_ownerships_to_grant_ownership = tuple(schema_ownership for schema_ownership in schema_ownerships if schema_ownership.schema_name not in existing_schema_ownerships)
+        for schema_name in schema_names_to_revoke_ownership:
+            revoke_schema_ownership(schema_name)
+        for schema_ownership in schema_ownerships_to_grant_ownership:
+            if (schema_ownership.schema_name,) not in schemas_that_exist:
+                create_schema(schema_ownership.schema_name)
+            grant_schema_ownership(role_name, schema_ownership.schema_name)
 
         # Create database connect roles if we need to
         database_connect_roles = get_database_connect_roles(database_connects)
@@ -412,3 +469,31 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             - set(role for role in schema_usage_roles.values()) \
             - set(role for role in table_select_roles.values())
         revoke_memberships(memberships_to_revoke, role_name)
+
+
+# Suspect this is going to turn into very hefty SQL query that will essentially fetch all current
+# permissions granted to the role. Hence not having it inline with the Python code, and it being
+# a touch over-engineered for what it does right now
+# Based on the queries at at https://stackoverflow.com/a/78466268/1319998
+_EXISTING_PERMISSIONS_SQL = '''
+-- ACL or owned-by dependencies of the role - global or in the currently connected database
+WITH owned_or_acl AS (
+  SELECT
+    refobjid,  -- The referenced object: the role in this case
+    classid,   -- The pg_class oid that the dependant object is in
+    objid,     -- The oid of the dependant object in the table specified by classid
+    deptype,   -- The dependency type: o==is owner, and might have acl, a==has acl and not owner
+    objsubid   -- The 1-indexed column index for table column permissions. 0 otherwise.
+  FROM pg_shdepend
+  WHERE refobjid = {role_name}::regrole
+  AND refclassid='pg_catalog.pg_authid'::regclass
+  AND deptype IN ('a', 'o')
+  AND (dbid = 0 OR dbid = (SELECT oid FROM pg_database WHERE datname = current_database()))
+)
+
+-- Schema ownership
+SELECT 'schema' AS on, nspname AS name_1, NULL AS name_2, NULL AS name_3, 'OWNER' AS privilege_type
+FROM pg_namespace n
+INNER JOIN owned_or_acl a ON a.objid = n.oid
+WHERE classid = 'pg_namespace'::regclass AND deptype = 'o'
+'''

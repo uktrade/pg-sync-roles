@@ -19,7 +19,7 @@ except ImportError:
 
 engine_future = {'future': True} if tuple(int(v) for v in sa.__version__.split('.')) < (2, 0, 0) else {}
 
-from pg_sync_roles import sync_roles, DatabaseConnect, SchemaUsage, TableSelect, Login, RoleMembership
+from pg_sync_roles import sync_roles, DatabaseConnect, SchemaUsage, TableSelect, Login, RoleMembership, SchemaOwnership
 
 
 # By 4000 roles having permission to something, we get "row is too big" errors, so it's a good
@@ -665,3 +665,37 @@ def test_table_select_granted_can_query(test_engine, test_table):
     engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
     with engine.connect() as conn:
         assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
+
+def test_schema_ownership_can_be_granted(test_engine, test_table):
+    schema_name, table_name = test_table
+    role_name = get_test_role()
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            SchemaOwnership(schema_name),
+        ))
+
+    with test_engine.connect() as conn:
+        assert conn.execute(sa.text(f"SELECT nspowner::regrole FROM pg_namespace WHERE nspname='{schema_name}'")).fetchall()[0][0] == role_name
+
+def test_schema_ownership_can_be_revoked(test_engine, test_table):
+    schema_name, table_name = test_table
+    role_name = get_test_role()
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            SchemaOwnership(schema_name),
+        ))
+        sync_roles(conn, role_name, grants=())
+
+    with test_engine.connect() as conn:
+        assert conn.execute(sa.text(f"SELECT nspowner::regrole FROM pg_namespace WHERE nspname='{schema_name}'")).fetchall()[0][0] == 'postgres'
+
+def test_ownership_if_schema_does_not_exist(test_engine):
+    schema_name = 'test_schema_' + uuid.uuid4().hex
+    role_name = get_test_role()
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            SchemaOwnership(schema_name),
+        ))
+
+    with test_engine.connect() as conn:
+        assert conn.execute(sa.text(f"SELECT nspowner::regrole FROM pg_namespace WHERE nspname='{schema_name}'")).fetchall()[0][0] == role_name
