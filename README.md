@@ -118,7 +118,7 @@ There are no plans to drop support for any of the above.
 ## Running tests locally
 
 ```bash
-python -m pip install -e ".[dev]"  # Only needed once
-./start-services.sh                # Only needed once
+python -m pip install psycopg -e ".[dev]"  # Only needed once
+./start-services.sh                        # Only needed once
 pytest
 ```
