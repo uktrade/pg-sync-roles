@@ -151,7 +151,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
                     AND privilege_type = 'USAGE'
                 ) grantees ON grantees.nspname = sc.schema_name
             """).format(
-                role_pattern=sql.Literal(f'\\_pgsr\\_local\\_{db_oid}_\\_schema\\_usage\\_%'),
+                role_pattern=sql.Literal(f'\\_pgsr\\_local\\_{db_oid}_\\schema\\_usage\\_%'),
                 schema_names=sql.SQL(',').join(
                     sql.SQL('({})').format(sql.Literal(schema_usage.schema_name))
                     for schema_usage in schema_usages
@@ -180,7 +180,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
                     AND privilege_type = 'SELECT'
                 ) grantees ON grantees.schema_name = tb.schema_name AND grantees.table_name = tb.table_name
             """).format(
-                role_pattern=sql.Literal(f'\\_pgsr\\_local\\_{db_oid}_\\_table\\_select\\_%'),
+                role_pattern=sql.Literal(f'\\_pgsr\\_local\\_{db_oid}\\_table\\_select\\_%'),
                 tables=sql.SQL(',').join(
                     sql.SQL('({},{})').format(
                         sql.Literal(table_select.schema_name),

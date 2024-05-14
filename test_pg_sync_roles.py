@@ -696,6 +696,49 @@ def test_table_select_granted_can_query(test_engine, test_table):
     with engine.connect() as conn:
         assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
 
+
+def test_schema_usage_repeated_does_not_increase_role_count(test_engine, test_table):
+    schema_name, table_name = test_table
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            SchemaUsage(schema_name),
+        ))
+
+        count_roles_1 = conn.execute(sa.text('SELECT count(*) FROM pg_roles')).fetchall()[0][0]
+
+        conn.commit()
+        sync_roles(conn, role_name, grants=(
+            SchemaUsage(schema_name),
+        ))
+
+        count_roles_2 = conn.execute(sa.text('SELECT count(*) FROM pg_roles')).fetchall()[0][0]
+
+    assert count_roles_1 == count_roles_2
+
+
+def test_table_select_repeated_does_not_increase_role_count(test_engine, test_table):
+    schema_name, table_name = test_table
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            TableSelect(schema_name, table_name),
+        ))
+
+        count_roles_1 = conn.execute(sa.text('SELECT count(*) FROM pg_roles')).fetchall()[0][0]
+
+        conn.commit()
+        sync_roles(conn, role_name, grants=(
+            TableSelect(schema_name, table_name),
+        ))
+
+        count_roles_2 = conn.execute(sa.text('SELECT count(*) FROM pg_roles')).fetchall()[0][0]
+
+    assert count_roles_1 == count_roles_2
+
+
 def test_schema_ownership_can_be_granted(test_engine, test_table):
     schema_name, table_name = test_table
     role_name = get_test_role()
