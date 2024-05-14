@@ -214,6 +214,9 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 
         raise RuntimeError('Unable to find available role name')
 
+    def get_acl_rows(permissions):
+        return tuple(row for row in permissions if row['privilege_type'] in _KNOWN_PRIVILEGES)
+
     def grant_connect(database_name, role_name):
         logger.info("Granting CONNECT on database %s to role %s", database_name, role_name)
         execute_sql(sql.SQL('GRANT CONNECT ON DATABASE {database_name} TO {role_name}').format(
@@ -283,6 +286,18 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             role_name=sql.Identifier(role_name),
         ))
 
+    def revoke_table_perm(perm, role_name):
+        # We can't escape the privilege_type because it's a keyword, so we check it definitely is
+        # one of the known ones, as a paranoia check against SQL-injection
+        if perm['privilege_type'] not in _KNOWN_PRIVILEGES:
+            raise RuntimeError('Unknown privilege')
+        execute_sql(sql.SQL('REVOKE {privilege_type} ON TABLE {schema_name}.{table_name} FROM {role_name}').format(
+            privilege_type=sql.SQL(perm['privilege_type']),  # This is only OK because we know privilege_type is one of the known ones
+            schema_name=sql.Identifier(perm['name_1']),
+            table_name=sql.Identifier(perm['name_2']),
+            role_name=sql.Identifier(role_name),
+        ))
+
     def keys_with_none_value(d):
         return tuple(key for key, value in d.items() if value is None)
 
@@ -325,6 +340,12 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         # Find if we need to make the role
         role_needed = not get_role_exists(role_name)
 
+        # Get all existing permissions
+        existing_permissions = get_existing_permissions(role_name) if not role_needed else []
+
+        # Real ACL permissions - we revoke them all
+        acl_permissions_to_revoke = get_acl_rows(existing_permissions)
+
         # And the ACL-equivalent roles
         database_connect_roles = get_database_connect_roles(database_connects)
         database_connect_roles_needed = keys_with_none_value(database_connect_roles)
@@ -333,8 +354,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         table_select_roles = get_table_select_roles(db_oid, table_selects)
         table_select_roles_needed = keys_with_none_value(table_select_roles)
 
-        # Get existing ownerships, and those to grant and revoke
-        existing_permissions = get_existing_permissions(role_name) if not role_needed else []
+        # Ownerships to grant and revoke
         existing_schema_ownerships = tuple(perm['name_1'] for perm in existing_permissions if perm['on'] == 'schema')
         schema_ownership_names_exact = set(schema_ownership.schema_name for schema_ownership in schema_ownerships)
         schema_names_to_revoke_ownership = tuple(schema_name for schema_name in existing_schema_ownerships if schema_name not in schema_ownership_names_exact)
@@ -376,6 +396,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             and not logins_to_revoke
             and not schema_names_to_revoke_ownership
             and not schema_ownerships_to_grant_ownership
+            and not acl_permissions_to_revoke
         ):
             return
 
@@ -392,8 +413,11 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         tables_that_exist = set(get_tables_that_exist(table_selects))
         databases_that_exist = set(get_databases_that_exist(database_connects))
 
-        # Get existing permissions
+        # Get all existing permissions
         existing_permissions = get_existing_permissions(role_name)
+
+        # Real ACL permissions - we revoke them all
+        acl_permissions_to_revoke = get_acl_rows(existing_permissions)
 
         # Grant or revoke schema ownerships
         existing_schema_ownerships = tuple(perm['name_1'] for perm in existing_permissions if perm['on'] == 'schema')
@@ -467,6 +491,38 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             - set(role for role in table_select_roles.values())
         revoke_memberships(memberships_to_revoke, role_name)
 
+        # Revoke permissions on tables
+        acl_table_permissions_to_revoke = tuple(perm for perm in acl_permissions_to_revoke if perm['on'] in _TABLE_LIKE)
+        for perm in acl_table_permissions_to_revoke:
+            revoke_table_perm(perm, role_name)
+
+
+_KNOWN_PRIVILEGES = {
+    'SELECT',
+    'INSERT',
+    'UPDATE',
+    'DELETE',
+    'TRUNCATE',
+    'REFERENCES',
+    'TRIGGER',
+    'CREATE',
+    'CONNECT',
+    'TEMPORARY',
+    'EXECUTE',
+    'USAGE',
+    'SET',
+    'ALTER SYSTEM',
+}
+
+
+_TABLE_LIKE = {
+    'table',
+    'view',
+    'materialized view',
+    'foreign table',
+    'partitioned table',
+}
+
 
 # Suspect this is going to turn into very hefty SQL query that will essentially fetch all current
 # permissions granted to the role. Hence not having it inline with the Python code, and it being
@@ -512,6 +568,16 @@ UNION ALL
     AND refclassid='pg_catalog.pg_authid'::regclass
     AND deptype IN ('a', 'o')
     AND (dbid = 0 OR dbid = (SELECT oid FROM pg_database WHERE datname = current_database()))
+  ),
+
+  relkind_mapping(relkind, type) AS (
+    VALUES
+      ('r', 'table'),
+      ('v', 'view'),
+      ('m', 'materialized view'),
+      ('f', 'foreign table'),
+      ('p', 'partitioned table'),
+      ('S', 'sequence')
   )
 
   -- Schema ownership
@@ -519,5 +585,16 @@ UNION ALL
   FROM pg_namespace n
   INNER JOIN owned_or_acl a ON a.objid = n.oid
   WHERE classid = 'pg_namespace'::regclass AND deptype = 'o'
+
+  UNION ALL
+
+  -- Table(-like) privileges
+  SELECT r.type AS on, nspname AS name_1, relname AS name_2, NULL AS name_3, privilege_type
+  FROM pg_class c
+  INNER JOIN pg_namespace n ON n.oid = c.relnamespace
+  INNER JOIN owned_or_acl a ON a.objid = c.oid
+  CROSS JOIN aclexplode(c.relacl)
+  INNER JOIN relkind_mapping r ON r.relkind = c.relkind
+  WHERE classid = 'pg_class'::regclass AND grantee = refobjid AND objsubid = 0
 )
 '''
