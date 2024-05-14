@@ -27,9 +27,12 @@ pip install pg-sync-roles psycopg
 
 ## Usage
 
-To give a role the ability to login, CONNECT to a database, and membership of another role:
+To give a role the ability to login (with a random password valid for 28 days), CONNECT to a database, and membership of another role:
 
 ```python
+import string
+import secrets
+from datetime import datetime, timedelta, timezone
 from pg_sync_roles import Login, DatabaseConnect, RoleMembership, sync_roles
 
 # For example purposes, PostgreSQL can be run locally using this...
@@ -38,12 +41,17 @@ from pg_sync_roles import Login, DatabaseConnect, RoleMembership, sync_roles
 # ... which should work with this engine
 engine = sa.create_engine('postgresql+psycopg://postgres@127.0.0.1:5432/')
 
+password_alphabet = string.ascii_letters + string.digits
+password = ''.join(secrets.choice(password_alphabet) for i in range(64))
+
+valid_until = datetime.now(timezone.utc) + timedelta(days=28)
+
 with engine.connect() as conn:
     sync_roles(
         conn,
         'my_user_name',
         grants=(
-            Login(password='...', valid_until='...'),
+            Login(password=password, valid_until=valid_until),
             DatabaseConnect('my_database_name'),
             RoleMembership('my_role_name'),
         ),
