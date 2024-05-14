@@ -15,7 +15,7 @@ pg-sync-roles should not be used on roles that should have permissions to multip
 - [Features](#features)
 - [Installation](#installation)
 - [Usage](#usage)
-- [Locking and coordination with other processes](#locking-and-coordination-with-other-processes)
+- [Locking](#locking)
 - [Under the hood](#under-the-hood)
 - [Compatibility](#compatibility)
 - [Running tests locally](#running-tests-locally)
@@ -99,7 +99,7 @@ with engine.connect() as conn:
 ```
 
 
-## Locking and coordination with other processes
+## Locking
 
 pg-sync-roles obtains an advisory exclusive lock before making any changes - this avoids "tuple concurrently updated" or "tuple concurrently deleted" errors that can be raised when multiple connections change or delete the same permissions-related rows. It does this by calling the `pg_advisory_xact_lock(key bigint)` function. By default a key of 1 is used, but this can be changed by passing a different integer key as the `lock_key` parameter to `sync_roles`.
 
