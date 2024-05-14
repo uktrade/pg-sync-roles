@@ -548,10 +548,11 @@ WHERE oid = quote_ident({role_name})::regrole
 UNION ALL
 
 -- Direct role memberships
-SELECT 'role' AS on, rolname AS name_1, NULL AS name_2, NULL AS name_3, 'MEMBER' AS privilege_type
-FROM pg_auth_members m
-INNER JOIN pg_roles r ON r.oid = m.roleid
-WHERE m.member = quote_ident({role_name})::regrole
+SELECT 'role' AS on, groups.rolname AS name_1, NULL AS name_2, NULL AS name_3, 'MEMBER' AS privilege_type
+FROM pg_auth_members mg
+INNER JOIN pg_roles groups ON groups.oid = mg.roleid
+INNER JOIN pg_roles members ON members.oid = mg.member
+WHERE members.rolname = {role_name}
 
 UNION ALL
 
