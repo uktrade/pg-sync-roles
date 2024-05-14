@@ -293,6 +293,8 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             raise RuntimeError('Unknown privilege')
         execute_sql(sql.SQL('REVOKE {privilege_type} ON TABLE {schema_name}.{table_name} FROM {role_name}').format(
             privilege_type=sql.SQL(perm['privilege_type']),  # This is only OK because we know privilege_type is one of the known ones
+            schema_name=sql.Identifier(perm['name_1']),
+            table_name=sql.Identifier(perm['name_2']),
             role_name=sql.Identifier(role_name),
         ))
 
@@ -492,7 +494,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         # Revoke permissions on tables
         acl_table_permissions_to_revoke = tuple(perm for perm in acl_permissions_to_revoke if perm['on'] in _TABLE_LIKE)
         for perm in acl_table_permissions_to_revoke:
-            revoke_table_perm(perm)
+            revoke_table_perm(perm, role_name)
 
 
 _KNOWN_PRIVILEGES = {
