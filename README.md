@@ -113,3 +113,12 @@ pg-sync-roles aims to be compatible with a wide range of Python and other depend
 Note that SQLAlchemy < 2 does not support Psycopg 3, and for SQLAlchemy < 2 `future=True` must be passed to its create_engine function.
 
 There are no plans to drop support for any of the above.
+
+
+## Running tests locally
+
+```bash
+python -m pip install -e ".[dev]"  # Only needed once
+./start-services.sh                # Only needed once
+pytest
+```
