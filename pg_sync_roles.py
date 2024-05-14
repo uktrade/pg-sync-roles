@@ -521,6 +521,7 @@ _TABLE_LIKE = {
     'materialized view',
     'foreign table',
     'partitioned table',
+    'sequence',
 }
 
 
