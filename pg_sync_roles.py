@@ -314,12 +314,12 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 
         # Find existing objects where needed
         schemas_that_exist = set(get_schemas_that_exist(all_schema_names))
+        tables_that_exist = set(get_tables_that_exist(table_selects))
+        databases_that_exist = set(get_databases_that_exist(database_connects))
 
         # Filter out databases and tables that don't exist
-        databases_that_exist = set(get_databases_that_exist(database_connects))
         database_connects = tuple(database_connect for database_connect in database_connects if (database_connect.database_name,) in databases_that_exist)
         schema_usages = tuple(schema_usage for schema_usage in schema_usages if (schema_usage.schema_name,) in schemas_that_exist)
-        tables_that_exist = set(get_tables_that_exist(table_selects))
         table_selects = tuple(table_select for table_select in table_selects if (table_select.schema_name, table_select.table_name) in tables_that_exist)
 
         # Find if we need to make the role
@@ -386,6 +386,11 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         role_needed = not get_role_exists(role_name)
         if role_needed:
             create_role(role_name)
+
+        # Find existing objects where needed
+        schemas_that_exist = set(get_schemas_that_exist(all_schema_names))
+        tables_that_exist = set(get_tables_that_exist(table_selects))
+        databases_that_exist = set(get_databases_that_exist(database_connects))
 
         # Get existing permissions
         existing_permissions = get_existing_permissions(role_name)
