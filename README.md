@@ -8,6 +8,20 @@ Python utility function to ensure that a PostgreSQL role has certain permissions
 
 pg-sync-roles should not be used on roles that should have permissions to multiple database in a cluster (although this limitation may be removed in future versions)
 
+---
+
+### Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Locking and coordination with other processes](#locking-and-coordination-with-other-processes)
+- [Under the hood](#under-the-hood)
+- [Compatibility](#compatibility)
+- [Running tests locally](#running-tests-locally)
+
+---
+
 ## Features
 
 - Transparently handles high numbers of permissions - avoiding "row is too big" errors.
@@ -85,7 +99,7 @@ with engine.connect() as conn:
 ```
 
 
-## Locking and coordination with other processes that manage permissions
+## Locking and coordination with other processes
 
 pg-sync-roles obtains an advisory exclusive lock before making any changes - this avoids "tuple concurrently updated" or "tuple concurrently deleted" errors that can be raised when multiple connections change or delete the same permissions-related rows. It does this by calling the `pg_advisory_xact_lock(key bigint)` function. By default a key of 1 is used, but this can be changed by passing a different integer key as the `lock_key` parameter to `sync_roles`.
 
