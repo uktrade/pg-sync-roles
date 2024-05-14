@@ -28,7 +28,7 @@ pip install pg-sync-roles psycopg
 
 ## Usage
 
-To give a user CONNECT on a database, as well as membership of role:
+To give a role the ability to login, CONNECT to a database, and membership of another role:
 
 ```python
 from pg_sync_roles import Login, DatabaseConnect, RoleMembership, sync_roles
@@ -51,7 +51,7 @@ with engine.connect() as conn:
     )
 ```
 
-Or to give a use SELECT on a table, USAGE on a schema, membersip of a role, and ownership of a schema:
+Or to give a role SELECT on a table, USAGE on a schema, membersip of a role, and OWNERship of another schema:
 
 ```python
 from pg_sync_roles import (
