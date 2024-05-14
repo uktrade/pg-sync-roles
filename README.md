@@ -1,6 +1,10 @@
 # pg-sync-roles [![PyPI package](https://img.shields.io/pypi/v/pg-sync-roles?label=PyPI%20package)](https://pypi.org/project/pg-sync-roles/) [![Test suite](https://img.shields.io/github/actions/workflow/status/uktrade/pg-sync-roles/test.yaml?label=Test%20suite)](https://github.com/uktrade/pg-sync-roles/actions/workflows/test.yaml) [![Code coverage](https://img.shields.io/codecov/c/github/uktrade/pg-sync-roles?label=Code%20coverage)](https://app.codecov.io/gh/uktrade/pg-sync-roles)
 
-Python utility function to ensure that a PostgreSQL role has certain permissions or role memberships
+Python utility function to ensure that a PostgreSQL role has certain permissions or role memberships, and no others. To use pg-sync-roles effectively and securely, you should have knowledge of:
+
+- [PostgreSQL privileges](https://www.postgresql.org/docs/current/ddl-priv.html)
+- [PostgreSQL role attributes](https://www.postgresql.org/docs/current/role-attributes.html)
+- [PostgreSQL database roles](https://www.postgresql.org/docs/current/user-manag.html)
 
 > [!WARNING]  
 > Work in progress. This README serves as a rough design spec.
