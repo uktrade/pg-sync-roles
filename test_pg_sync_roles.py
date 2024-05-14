@@ -120,6 +120,21 @@ def test_view(test_engine, test_table):
         conn.execute(sa.text(f'DROP VIEW IF EXISTS {schema_name}.{view_name}'))
 
 
+@pytest.fixture()
+def test_sequence(test_engine, test_table):
+    schema_name, _ = test_table
+
+    sequence_name = 'test_sequence_' + uuid.uuid4().hex
+
+    with test_engine.begin() as conn:
+        conn.execute(sa.text(f'CREATE SEQUENCE {schema_name}.{sequence_name} START 101;'))
+
+    yield schema_name, sequence_name
+
+    with test_engine.begin() as conn:
+        conn.execute(sa.text(f'DROP SEQUENCE IF EXISTS {schema_name}.{sequence_name}'))
+
+
 def test_many_roles_with_database_connect_does_not_raise_exception(test_engine):
     with test_engine.connect() as conn:
         for role_name in (uuid.uuid4().hex for _ in range(0, ROLES_PER_TEST)):
@@ -766,3 +781,29 @@ def test_direct_view_permission_is_revoked(test_engine, test_view):
     with engine.connect() as conn:
         with pytest.raises(sa.exc.ProgrammingError, match='permission denied for (view|relation)'):
             assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{view_name}")).fetchall()[0][0] == 0
+
+
+def test_direct_sequence_permission_is_revoked(test_engine, test_sequence):
+    schema_name, sequence_name = test_sequence
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=())
+
+    with test_engine.connect() as conn:
+        conn.execute(sa.text(f'GRANT USAGE ON TABLE {schema_name}.{sequence_name} TO {role_name}'))
+        conn.commit()
+
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaUsage(schema_name),
+        ))
+
+    with engine.connect() as conn:
+        with pytest.raises(sa.exc.ProgrammingError, match='permission denied for sequence'):
+            assert conn.execute(sa.text(f"SELECT nextval('{schema_name}.{sequence_name}');")).fetchall()[0][0] == 0
