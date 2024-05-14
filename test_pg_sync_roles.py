@@ -105,6 +105,21 @@ def test_table(test_engine):
         conn.execute(sa.text(f'DROP SCHEMA IF EXISTS {schema_name}'))
 
 
+@pytest.fixture()
+def test_view(test_engine, test_table):
+    schema_name, table_name = test_table
+
+    view_name = 'test_view_' + uuid.uuid4().hex
+
+    with test_engine.begin() as conn:
+        conn.execute(sa.text(f'CREATE VIEW {schema_name}.{view_name} AS SELECT * FROM {schema_name}.{table_name}'))
+
+    yield schema_name, view_name
+
+    with test_engine.begin() as conn:
+        conn.execute(sa.text(f'DROP VIEW IF EXISTS {schema_name}.{view_name}'))
+
+
 def test_many_roles_with_database_connect_does_not_raise_exception(test_engine):
     with test_engine.connect() as conn:
         for role_name in (uuid.uuid4().hex for _ in range(0, ROLES_PER_TEST)):
@@ -725,3 +740,29 @@ def test_direct_table_permission_can_be_revoked(test_engine, test_table):
     with engine.connect() as conn:
         with pytest.raises(sa.exc.ProgrammingError, match='permission denied for (table|relation)'):
             assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
+
+
+def test_direct_view_permission_is_revoked(test_engine, test_view):
+    schema_name, view_name = test_view
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=())
+
+    with test_engine.connect() as conn:
+        conn.execute(sa.text(f'GRANT SELECT ON TABLE {schema_name}.{view_name} TO {role_name}'))
+        conn.commit()
+
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaUsage(schema_name),
+        ))
+
+    with engine.connect() as conn:
+        with pytest.raises(sa.exc.ProgrammingError, match='permission denied for (view|relation)'):
+            assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{view_name}")).fetchall()[0][0] == 0
