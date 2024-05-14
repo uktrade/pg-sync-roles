@@ -200,12 +200,6 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             role_name=sql.Literal(role_name)
         )).fetchall())
 
-    def get_memberships(role_name):
-        membership_rows = execute_sql(sql.SQL('SELECT roleid::regrole FROM pg_auth_members WHERE member={role_name}::regrole').format(
-            role_name=sql.Literal(role_name)
-        )).fetchall()
-        return tuple(membership for membership, in membership_rows)
-
     def create_role(role_name):
         execute_sql(sql.SQL('CREATE ROLE {role_name};').format(role_name=sql.Identifier(role_name)))
 
@@ -351,9 +345,8 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         schema_names_to_revoke_ownership = tuple(schema_name for schema_name in existing_schema_ownerships if schema_name not in schema_ownership_names_exact)
         schema_ownerships_to_grant_ownership = tuple(schema_ownership for schema_ownership in schema_ownerships if schema_ownership.schema_name not in existing_schema_ownerships)
 
-
         # And any memberships of the database connect roles or explicitly requested role memberships
-        memberships = set(get_memberships(role_name)) if not role_needed else set()
+        memberships = set(perm['name_1'] for perm in existing_permissions if perm['on'] == 'role' and perm['privilege_type'] == 'MEMBER')
         database_connect_memberships_needed = tuple(role for role in database_connect_roles.values() if role not in memberships)
         schema_usage_memberships_needed = tuple(role for role in schema_usage_roles.values() if role not in memberships)
         table_select_memberships_needed = tuple(role for role in table_select_roles.values() if role not in memberships)
@@ -448,7 +441,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             revoke_login(role_name)
 
         # Grant memberships if we need to
-        memberships = set(get_memberships(role_name)) if not role_needed else set()
+        memberships = set(perm['name_1'] for perm in existing_permissions if perm['on'] == 'role' and perm['privilege_type'] == 'MEMBER')
         database_connect_memberships_needed = tuple(role for role in database_connect_roles.values() if role not in memberships)
         table_select_memberships_needed = tuple(role for role in table_select_roles.values() if role not in memberships)
         schema_usage_memberships_needed = tuple(role for role in schema_usage_roles.values() if role not in memberships)
@@ -476,24 +469,34 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 # a touch over-engineered for what it does right now
 # Based on the queries at at https://stackoverflow.com/a/78466268/1319998
 _EXISTING_PERMISSIONS_SQL = '''
--- ACL or owned-by dependencies of the role - global or in the currently connected database
-WITH owned_or_acl AS (
-  SELECT
-    refobjid,  -- The referenced object: the role in this case
-    classid,   -- The pg_class oid that the dependant object is in
-    objid,     -- The oid of the dependant object in the table specified by classid
-    deptype,   -- The dependency type: o==is owner, and might have acl, a==has acl and not owner
-    objsubid   -- The 1-indexed column index for table column permissions. 0 otherwise.
-  FROM pg_shdepend
-  WHERE refobjid = {role_name}::regrole
-  AND refclassid='pg_catalog.pg_authid'::regclass
-  AND deptype IN ('a', 'o')
-  AND (dbid = 0 OR dbid = (SELECT oid FROM pg_database WHERE datname = current_database()))
-)
+-- Direct role memberships
+SELECT 'role' AS on, rolname AS name_1, NULL AS name_2, NULL AS name_3, 'MEMBER' AS privilege_type
+FROM pg_auth_members m
+INNER JOIN pg_roles r ON r.oid = m.roleid
+WHERE m.member = quote_ident({role_name})::regrole
 
--- Schema ownership
-SELECT 'schema' AS on, nspname AS name_1, NULL AS name_2, NULL AS name_3, 'OWNER' AS privilege_type
-FROM pg_namespace n
-INNER JOIN owned_or_acl a ON a.objid = n.oid
-WHERE classid = 'pg_namespace'::regclass AND deptype = 'o'
+UNION ALL
+
+-- ACL or owned-by dependencies of the role - global or in the currently connected database
+(
+  WITH owned_or_acl AS (
+    SELECT
+      refobjid,  -- The referenced object: the role in this case
+      classid,   -- The pg_class oid that the dependant object is in
+      objid,     -- The oid of the dependant object in the table specified by classid
+      deptype,   -- The dependency type: o==is owner, and might have acl, a==has acl and not owner
+      objsubid   -- The 1-indexed column index for table column permissions. 0 otherwise.
+    FROM pg_shdepend
+    WHERE refobjid = quote_ident({role_name})::regrole
+    AND refclassid='pg_catalog.pg_authid'::regclass
+    AND deptype IN ('a', 'o')
+    AND (dbid = 0 OR dbid = (SELECT oid FROM pg_database WHERE datname = current_database()))
+  )
+
+  -- Schema ownership
+  SELECT 'schema' AS on, nspname AS name_1, NULL AS name_2, NULL AS name_3, 'OWNER' AS privilege_type
+  FROM pg_namespace n
+  INNER JOIN owned_or_acl a ON a.objid = n.oid
+  WHERE classid = 'pg_namespace'::regclass AND deptype = 'o'
+)
 '''
