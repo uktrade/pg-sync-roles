@@ -59,6 +59,8 @@ def root_engine():
 
 @pytest.fixture()
 def test_engine(root_engine):
+    syncing_user = 'test_syncing_user_' + uuid.uuid4().hex
+
     def drop_database_if_exists(conn):
         # Recent versions of PostgreSQL have a `WITH (force)` option to DROP DATABASE which kills
         # conections, but we run tests on older versions that don't support this.
@@ -69,6 +71,12 @@ def test_engine(root_engine):
             AND pid != pg_backend_pid();
         '''))
         conn.execute(sa.text(f'DROP DATABASE IF EXISTS {TEST_DATABASE_NAME}'))
+        memberships = conn.execute(sa.text('''
+            SELECT roleid::regrole, member::regrole FROM pg_auth_members WHERE member::regrole::text LIKE 'test\\_%' OR member::text LIKE '\\_pgsr\\_%'
+        ''')).fetchall()
+        for role, member in memberships:
+            conn.execute(sa.text(f"REVOKE {role} FROM {member} CASCADE"))
+
         roles = conn.execute(sa.text('''
             SELECT rolname FROM pg_roles WHERE rolname LIKE 'test\\_%' OR rolname LIKE '\\_pgsr\\_%'
         ''')).fetchall()
@@ -82,9 +90,13 @@ def test_engine(root_engine):
         conn.execute(sa.text(f'CREATE DATABASE {TEST_DATABASE_NAME}'))
         conn.execute(sa.text(f'REVOKE CONNECT ON DATABASE {TEST_DATABASE_NAME} FROM PUBLIC'))
 
+    with root_engine.begin() as conn:
+        conn.execute(sa.text(f"CREATE ROLE {syncing_user} WITH CREATEROLE LOGIN PASSWORD 'password'"))
+        conn.execute(sa.text(f"ALTER DATABASE {TEST_DATABASE_NAME} OWNER TO {syncing_user}"))
+
     # The NullPool prevents default connection pooling, which interfers with tests that
     # terminate connections
-    yield sa.create_engine(f'{engine_type}://postgres:postgres@127.0.0.1:5432/{TEST_DATABASE_NAME}', poolclass=sa.pool.NullPool, **engine_future)
+    yield sa.create_engine(f'{engine_type}://{syncing_user}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', poolclass=sa.pool.NullPool, **engine_future)
 
     with root_engine.connect() as conn:
         conn.execution_options(isolation_level='AUTOCOMMIT')
@@ -92,7 +104,7 @@ def test_engine(root_engine):
 
 
 @pytest.fixture()
-def test_table(test_engine):
+def test_table(root_engine, test_engine):
     schema_name = 'test_schema_' + uuid.uuid4().hex
     table_name = 'test_table_' + uuid.uuid4().hex
 
@@ -102,7 +114,7 @@ def test_table(test_engine):
     
     yield schema_name, table_name
 
-    with test_engine.begin() as conn:
+    with root_engine.begin() as conn:
         conn.execute(sa.text(f'DROP TABLE IF EXISTS {schema_name}.{table_name}'))
         conn.execute(sa.text(f'DROP SCHEMA IF EXISTS {schema_name}'))
 
@@ -765,7 +777,7 @@ def test_schema_ownership_can_be_revoked(test_engine, test_table):
         sync_roles(conn, role_name, grants=())
 
     with test_engine.connect() as conn:
-        assert conn.execute(sa.text(f"SELECT nspowner::regrole FROM pg_namespace WHERE nspname='{schema_name}'")).fetchall()[0][0] == 'postgres'
+        assert conn.execute(sa.text(f"SELECT nspowner::regrole::name = SESSION_USER FROM pg_namespace WHERE nspname='{schema_name}'")).fetchall()[0][0]
 
 def test_ownership_if_schema_does_not_exist(test_engine):
     schema_name = 'test_schema_' + uuid.uuid4().hex

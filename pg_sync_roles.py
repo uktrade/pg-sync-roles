@@ -222,7 +222,15 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 
     def grant_schema_ownership(role_name, schema_name):
         logger.info("Granting OWNERSHIP on schema %s to role %s", schema_name, role_name)
+        execute_sql(sql.SQL('GRANT {role_name} TO SESSION_USER').format(
+            role_name=sql.Identifier(role_name),
+            schema_name=sql.Identifier(schema_name),
+        ))
         execute_sql(sql.SQL('ALTER SCHEMA {schema_name} OWNER TO {role_name}').format(
+            role_name=sql.Identifier(role_name),
+            schema_name=sql.Identifier(schema_name),
+        ))
+        execute_sql(sql.SQL('REVOKE {role_name} FROM SESSION_USER').format(
             role_name=sql.Identifier(role_name),
             schema_name=sql.Identifier(schema_name),
         ))
@@ -243,7 +251,15 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 
     def revoke_schema_ownership(schema_name):
         logger.info("Revoking schema ownership of %s from role %s", schema_name, role_name)
+        execute_sql(sql.SQL('GRANT {role_name} TO SESSION_USER').format(
+            role_name=sql.Identifier(role_name),
+            schema_name=sql.Identifier(schema_name),
+        ))
         execute_sql(sql.SQL('ALTER SCHEMA {schema_name} OWNER TO SESSION_USER').format(
+            schema_name=sql.Identifier(schema_name),
+        ))
+        execute_sql(sql.SQL('REVOKE {role_name} FROM SESSION_USER').format(
+            role_name=sql.Identifier(role_name),
             schema_name=sql.Identifier(schema_name),
         ))
 
