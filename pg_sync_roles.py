@@ -27,14 +27,14 @@ class SchemaUsage:
 
 
 @dataclass(frozen=True)
-class SchemaOwnership:
-    schema_name: str
-
-
-@dataclass(frozen=True)
 class TableSelect:
     schema_name: str
     table_name: str
+
+
+@dataclass(frozen=True)
+class SchemaOwnership:
+    schema_name: str
 
 
 @dataclass(frozen=True)
