@@ -378,7 +378,8 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         memberships_to_revoke = memberships \
             - set(role_membership.role_name for role_membership in role_memberships) \
             - set(role for role in database_connect_roles.values()) \
-            - set(role for role in table_select_roles.values())
+            - set(role for role in table_select_roles.values()) \
+            - set(role for role in schema_usage_roles.values())
 
         # If we don't need to do anything, we're done.
         if (

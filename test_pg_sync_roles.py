@@ -82,7 +82,9 @@ def test_engine(root_engine):
         conn.execute(sa.text(f'CREATE DATABASE {TEST_DATABASE_NAME}'))
         conn.execute(sa.text(f'REVOKE CONNECT ON DATABASE {TEST_DATABASE_NAME} FROM PUBLIC'))
 
-    yield sa.create_engine(f'{engine_type}://postgres:postgres@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    # The NullPool prevents default connection pooling, which interfers with tests that
+    # terminate connections
+    yield sa.create_engine(f'{engine_type}://postgres:postgres@127.0.0.1:5432/{TEST_DATABASE_NAME}', poolclass=sa.pool.NullPool, **engine_future)
 
     with root_engine.connect() as conn:
         conn.execution_options(isolation_level='AUTOCOMMIT')
@@ -231,14 +233,17 @@ def test_initial_grant_takes_lock(test_engine, grants):
     assert num_blocked
 
 
-@pytest.mark.parametrize('grants', [
-    (),
-    (Login(valid_until=datetime(2000,1,1, tzinfo=timezone.utc)),),
-    (DatabaseConnect(TEST_DATABASE_NAME),),
-    (RoleMembership(TEST_BASE_ROLE),),
+@pytest.mark.parametrize('get_grants', [
+    lambda _, __: (),
+    lambda _, __: (Login(valid_until=datetime(2000,1,1, tzinfo=timezone.utc)),),
+    lambda _, __: (DatabaseConnect(TEST_DATABASE_NAME),),
+    lambda _, __: (RoleMembership(TEST_BASE_ROLE),),
+    lambda schema_name, table_name: (SchemaUsage(schema_name),),
 ])
-def test_identical_grant_does_not_take_lock(test_engine, grants):
+def test_identical_grant_does_not_take_lock(test_engine, test_table, get_grants):
+    schema_name, table_name = test_table
     role_name = get_test_role()
+    grants = get_grants(schema_name, table_name)
 
     done = threading.Event()
 
