@@ -338,41 +338,40 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         table_selects = tuple(table_select for table_select in table_selects if (table_select.schema_name, table_select.table_name) in tables_that_exist)
 
         # Find if we need to make the role
-        role_needed = not get_role_exists(role_name)
+        role_to_create = not get_role_exists(role_name)
 
         # Get all existing permissions
-        existing_permissions = get_existing_permissions(role_name) if not role_needed else []
+        existing_permissions = get_existing_permissions(role_name) if not role_to_create else []
 
         # Real ACL permissions - we revoke them all
         acl_permissions_to_revoke = get_acl_rows(existing_permissions)
 
         # And the ACL-equivalent roles
         database_connect_roles = get_database_connect_roles(database_connects)
-        database_connect_roles_needed = keys_with_none_value(database_connect_roles)
+        database_connect_roles_to_create = keys_with_none_value(database_connect_roles)
         schema_usage_roles = get_schema_usage_roles(db_oid, schema_usages)
-        schema_usage_roles_needed = keys_with_none_value(schema_usage_roles)
+        schema_usage_roles_to_create = keys_with_none_value(schema_usage_roles)
         table_select_roles = get_table_select_roles(db_oid, table_selects)
-        table_select_roles_needed = keys_with_none_value(table_select_roles)
+        table_select_roles_to_create = keys_with_none_value(table_select_roles)
 
         # Ownerships to grant and revoke
-        existing_schema_ownerships = tuple(perm['name_1'] for perm in existing_permissions if perm['on'] == 'schema')
-        schema_ownership_names_exact = set(schema_ownership.schema_name for schema_ownership in schema_ownerships)
-        schema_names_to_revoke_ownership = tuple(schema_name for schema_name in existing_schema_ownerships if schema_name not in schema_ownership_names_exact)
-        schema_ownerships_to_grant_ownership = tuple(schema_ownership for schema_ownership in schema_ownerships if schema_ownership.schema_name not in existing_schema_ownerships)
+        schema_ownerships_that_exist = tuple(SchemaOwnership(perm['name_1']) for perm in existing_permissions if perm['on'] == 'schema')
+        schema_ownerships_to_revoke = tuple(schema_ownership for schema_ownership in schema_ownerships_that_exist if schema_ownership.schema_name not in schema_ownerships_that_exist)
+        schema_ownerships_to_grant = tuple(schema_ownership for schema_ownership in schema_ownerships if schema_ownership.schema_name not in schema_ownerships_that_exist)
 
         # And any memberships of the database connect roles or explicitly requested role memberships
         memberships = set(perm['name_1'] for perm in existing_permissions if perm['on'] == 'role' and perm['privilege_type'] == 'MEMBER')
-        database_connect_memberships_needed = tuple(role for role in database_connect_roles.values() if role not in memberships)
-        schema_usage_memberships_needed = tuple(role for role in schema_usage_roles.values() if role not in memberships)
-        table_select_memberships_needed = tuple(role for role in table_select_roles.values() if role not in memberships)
-        role_memberships_needed = tuple(role_membership for role_membership in role_memberships if role_membership.role_name not in memberships)
+        database_connect_memberships_to_grant = tuple(role for role in database_connect_roles.values() if role not in memberships)
+        schema_usage_memberships_to_grant = tuple(role for role in schema_usage_roles.values() if role not in memberships)
+        table_select_memberships_to_grant = tuple(role for role in table_select_roles.values() if role not in memberships)
+        role_memberships_to_grant = tuple(role_membership for role_membership in role_memberships if role_membership.role_name not in memberships)
 
         # And if the role can login / its login status is to be changed
         login_row = next((perm for perm in existing_permissions if perm['on'] == 'cluster' and perm['privilege_type'] == 'LOGIN'), None)
         can_login = login_row is not None
 
         valid_until = datetime.strptime(login_row['name_1'], '%Y-%m-%dT%H:%M:%S.%f%z') if login_row is not None else None
-        logins_needed = logins and (not can_login or valid_until != logins[0].valid_until or logins[0].password is not None)
+        logins_to_grant = logins and (not can_login or valid_until != logins[0].valid_until or logins[0].password is not None)
         logins_to_revoke = not logins and can_login
 
         # And any memberships to revoke
@@ -383,19 +382,19 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 
         # If we don't need to do anything, we're done.
         if (
-            not role_needed
-            and not database_connect_roles_needed
-            and not schema_usage_roles_needed
-            and not table_select_roles_needed
-            and not database_connect_memberships_needed
-            and not schema_usage_memberships_needed
-            and not table_select_memberships_needed
-            and not role_memberships_needed
+            not role_to_create
+            and not database_connect_roles_to_create
+            and not schema_usage_roles_to_create
+            and not table_select_roles_to_create
+            and not database_connect_memberships_to_grant
+            and not schema_usage_memberships_to_grant
+            and not table_select_memberships_to_grant
+            and not role_memberships_to_grant
             and not memberships_to_revoke
-            and not logins_needed
+            and not logins_to_grant
             and not logins_to_revoke
-            and not schema_names_to_revoke_ownership
-            and not schema_ownerships_to_grant_ownership
+            and not schema_ownerships_to_revoke
+            and not schema_ownerships_to_grant
             and not acl_permissions_to_revoke
         ):
             return
@@ -404,8 +403,8 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         lock()
 
         # Make the role if we need to
-        role_needed = not get_role_exists(role_name)
-        if role_needed:
+        role_to_create = not get_role_exists(role_name)
+        if role_to_create:
             create_role(role_name)
 
         # Find existing objects where needed
@@ -420,21 +419,20 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         acl_permissions_to_revoke = get_acl_rows(existing_permissions)
 
         # Grant or revoke schema ownerships
-        existing_schema_ownerships = tuple(perm['name_1'] for perm in existing_permissions if perm['on'] == 'schema')
-        schema_ownership_names_exact = set(schema_ownership.schema_name for schema_ownership in schema_ownerships)
-        schema_names_to_revoke_ownership = tuple(schema_name for schema_name in existing_schema_ownerships if schema_name not in schema_ownership_names_exact)
-        schema_ownerships_to_grant_ownership = tuple(schema_ownership for schema_ownership in schema_ownerships if schema_ownership.schema_name not in existing_schema_ownerships)
-        for schema_name in schema_names_to_revoke_ownership:
-            revoke_schema_ownership(schema_name)
-        for schema_ownership in schema_ownerships_to_grant_ownership:
+        schema_ownerships_that_exist = tuple(SchemaOwnership(perm['name_1']) for perm in existing_permissions if perm['on'] == 'schema')
+        schema_ownerships_to_revoke = tuple(schema_ownership for schema_ownership in schema_ownerships_that_exist if schema_ownership.schema_name not in schema_ownerships_that_exist)
+        schema_ownerships_to_grant = tuple(schema_ownership for schema_ownership in schema_ownerships if schema_ownership.schema_name not in schema_ownerships_that_exist)
+        for schema_ownership in schema_ownerships_to_revoke:
+            revoke_schema_ownership(schema_ownership.schema_name)
+        for schema_ownership in schema_ownerships_to_grant:
             if (schema_ownership.schema_name,) not in schemas_that_exist:
                 create_schema(schema_ownership.schema_name)
             grant_schema_ownership(role_name, schema_ownership.schema_name)
 
         # Create database connect roles if we need to
         database_connect_roles = get_database_connect_roles(database_connects)
-        database_connect_roles_needed = keys_with_none_value(database_connect_roles)
-        for database_name in database_connect_roles_needed:
+        database_connect_roles_to_create = keys_with_none_value(database_connect_roles)
+        for database_name in database_connect_roles_to_create:
             database_connect_role = get_available_acl_role('_pgsr_global_database_connect_')
             create_role(database_connect_role)
             grant_connect(database_name, database_connect_role)
@@ -442,8 +440,8 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 
         # Create schema usage roles if we need to
         schema_usage_roles = get_schema_usage_roles(db_oid, schema_usages)
-        schema_usage_roles_needed = keys_with_none_value(schema_usage_roles)
-        for schema_name in schema_usage_roles_needed:
+        schema_usage_roles_to_create = keys_with_none_value(schema_usage_roles)
+        for schema_name in schema_usage_roles_to_create:
             schema_usage_role = get_available_acl_role(f'_pgsr_local_{db_oid}_schema_usage_')
             create_role(schema_usage_role)
             grant_usage(schema_name, schema_usage_role)
@@ -451,8 +449,8 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 
         # Create table select roles if we need to
         table_select_roles = get_table_select_roles(db_oid, table_selects)
-        table_select_roles_needed = keys_with_none_value(table_select_roles)
-        for schema_name, table_name in table_select_roles_needed:
+        table_select_roles_to_create = keys_with_none_value(table_select_roles)
+        for schema_name, table_name in table_select_roles_to_create:
             table_select_role = get_available_acl_role(f'_pgsr_local_{db_oid}_table_select_')
             create_role(table_select_role)
             grant_select(schema_name, table_name, table_select_role)
@@ -462,7 +460,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         login_row = next((perm for perm in existing_permissions if perm['on'] == 'cluster' and perm['privilege_type'] == 'LOGIN'), None)
         can_login = login_row is not None
         valid_until = datetime.strptime(login_row['name_1'], '%Y-%m-%dT%H:%M:%S.%f%z') if login_row is not None else None
-        if logins_needed:
+        if logins_to_grant:
             grant_login(role_name, logins[0])
         logins_to_revoke = not logins and can_login
         if logins_to_revoke:
@@ -470,16 +468,16 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 
         # Grant memberships if we need to
         memberships = set(perm['name_1'] for perm in existing_permissions if perm['on'] == 'role' and perm['privilege_type'] == 'MEMBER')
-        database_connect_memberships_needed = tuple(role for role in database_connect_roles.values() if role not in memberships)
-        table_select_memberships_needed = tuple(role for role in table_select_roles.values() if role not in memberships)
-        schema_usage_memberships_needed = tuple(role for role in schema_usage_roles.values() if role not in memberships)
-        role_memberships_needed = tuple(role_membership for role_membership in role_memberships if role_membership.role_name not in memberships)
-        for membership in role_memberships_needed:
+        database_connect_memberships_to_grant = tuple(role for role in database_connect_roles.values() if role not in memberships)
+        table_select_memberships_to_grant = tuple(role for role in table_select_roles.values() if role not in memberships)
+        schema_usage_memberships_to_grant = tuple(role for role in schema_usage_roles.values() if role not in memberships)
+        role_memberships_to_grant = tuple(role_membership for role_membership in role_memberships if role_membership.role_name not in memberships)
+        for membership in role_memberships_to_grant:
             if not get_role_exists(membership.role_name):
                 create_role(membership.role_name)
-        grant_memberships(database_connect_memberships_needed \
-            + schema_usage_memberships_needed \
-            + table_select_memberships_needed \
+        grant_memberships(database_connect_memberships_to_grant \
+            + schema_usage_memberships_to_grant \
+            + table_select_memberships_to_grant \
             + tuple(membership.role_name for membership in role_memberships),
         role_name)
 
