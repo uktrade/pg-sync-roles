@@ -74,6 +74,11 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             SELECT oid FROM pg_database WHERE datname = current_database()
         ''')).fetchall()[0][0]
 
+    def get_role_exists(role_name):
+        return execute_sql(sql.SQL("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = {role_name})").format(
+            role_name=sql.Literal(role_name),
+        )).fetchall()[0][0]
+
     def get_existing(table_name, column_name, values_to_search_for):
         if not values_to_search_for:
             return []
@@ -102,11 +107,6 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
                 for (schema_name, row_name) in values_to_search_for
             )
         )).fetchall()
-
-    def get_role_exists(role_name):
-        return execute_sql(sql.SQL("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = {role_name})").format(
-            role_name=sql.Literal(role_name),
-        )).fetchall()[0][0]
 
     def get_database_connect_roles(database_connects):
         database_name_role_names = \
