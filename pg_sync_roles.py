@@ -74,21 +74,14 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             SELECT oid FROM pg_database WHERE datname = current_database()
         ''')).fetchall()[0][0]
 
-    def get_databases_that_exist(database_connects):
-        if not database_connects:
+    def get_existing(table_name, column_name, values_to_search_for):
+        if not values_to_search_for:
             return []
-        return execute_sql(sql.SQL('SELECT datname FROM pg_database WHERE datname IN ({databases})').format(
-            databases=sql.SQL(',').join(
-                sql.Literal(database_connect.database_name) for database_connect in database_connects
-            )
-        )).fetchall()
-
-    def get_schemas_that_exist(schema_names):
-        if not schema_names:
-            return []
-        return execute_sql(sql.SQL('SELECT nspname FROM pg_namespace WHERE nspname IN ({schemas})').format(
-            schemas=sql.SQL(',').join(
-                sql.Literal(schema_name) for schema_name in schema_names
+        return execute_sql(sql.SQL('SELECT {column_name} FROM {table_name} WHERE {column_name} IN ({values_to_search_for})').format(
+            table_name=sql.Identifier(table_name),
+            column_name=sql.Identifier(column_name),
+            values_to_search_for=sql.SQL(',').join(
+                sql.Literal(value) for value in values_to_search_for
             )
         )).fetchall()
 
@@ -317,7 +310,8 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
     role_memberships = tuple(grant for grant in grants if isinstance(grant, RoleMembership))
 
     # Gather names of related grants (used for example to check if things exist)
-    all_schema_names = tuple(schema_usage.schema_name for schema_usage in schema_usages + schema_ownerships)
+    all_schema_names = tuple(grant.schema_name for grant in schema_usages + schema_ownerships)
+    all_database_names = tuple(grant.database_name for grant in database_connects)
 
     # Validation
     if len(logins) > 1:
@@ -328,9 +322,9 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         db_oid = get_database_oid()
 
         # Find existing objects where needed
-        schemas_that_exist = set(get_schemas_that_exist(all_schema_names))
+        databases_that_exist = set(get_existing('pg_database', 'datname', all_database_names))
+        schemas_that_exist = set(get_existing('pg_namespace', 'nspname', all_schema_names))
         tables_that_exist = set(get_tables_that_exist(table_selects))
-        databases_that_exist = set(get_databases_that_exist(database_connects))
 
         # Filter out databases and tables that don't exist
         database_connects = tuple(database_connect for database_connect in database_connects if (database_connect.database_name,) in databases_that_exist)
@@ -409,9 +403,9 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             create_role(role_name)
 
         # Find existing objects where needed
-        schemas_that_exist = set(get_schemas_that_exist(all_schema_names))
+        databases_that_exist = set(get_existing('pg_database', 'datname', all_database_names))
+        schemas_that_exist = set(get_existing('pg_namespace', 'nspname', all_schema_names))
         tables_that_exist = set(get_tables_that_exist(table_selects))
-        databases_that_exist = set(get_databases_that_exist(database_connects))
 
         # Get all existing permissions
         existing_permissions = get_existing_permissions(role_name)
