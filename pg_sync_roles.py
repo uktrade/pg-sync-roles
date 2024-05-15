@@ -69,6 +69,11 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
     def lock():
         execute_sql(sql.SQL("SELECT pg_advisory_xact_lock({lock_key})").format(lock_key=sql.Literal(lock_key)))
 
+    def get_database_oid():
+        return execute_sql(sql.SQL('''
+            SELECT oid FROM pg_database WHERE datname = current_database()
+        ''')).fetchall()[0][0]
+
     def get_databases_that_exist(database_connects):
         if not database_connects:
             return []
@@ -77,11 +82,6 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
                 sql.Literal(database_connect.database_name) for database_connect in database_connects
             )
         )).fetchall()
-
-    def get_database_oid():
-        return execute_sql(sql.SQL('''
-            SELECT oid FROM pg_database WHERE datname = current_database()
-        ''')).fetchall()[0][0]
 
     def get_schemas_that_exist(schema_names):
         if not schema_names:
@@ -200,12 +200,6 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             role_name=sql.Literal(role_name)
         )).fetchall())
 
-    def create_role(role_name):
-        execute_sql(sql.SQL('CREATE ROLE {role_name};').format(role_name=sql.Identifier(role_name)))
-
-    def create_schema(schema_name):
-        execute_sql(sql.SQL('CREATE SCHEMA {schema_name};').format(schema_name=sql.Identifier(schema_name)))
-
     def get_available_acl_role(base):
         for _ in range(0, 10):
             database_connect_role = base + uuid4().hex[:8]
@@ -216,6 +210,12 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 
     def get_table_like_acl_rows(permissions):
         return tuple(row for row in permissions if row['on'] in _TABLE_LIKE and row['privilege_type'] in _KNOWN_PRIVILEGES)
+
+    def create_role(role_name):
+        execute_sql(sql.SQL('CREATE ROLE {role_name};').format(role_name=sql.Identifier(role_name)))
+
+    def create_schema(schema_name):
+        execute_sql(sql.SQL('CREATE SCHEMA {schema_name};').format(schema_name=sql.Identifier(schema_name)))
 
     def grant_connect(database_name, role_name):
         logger.info("Granting CONNECT on database %s to role %s", database_name, role_name)
