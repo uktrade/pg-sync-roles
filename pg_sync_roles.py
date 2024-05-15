@@ -1,9 +1,9 @@
+import logging
 from contextlib import contextmanager
 from dataclasses import dataclass, is_dataclass
 from datetime import datetime
 from uuid import uuid4
-import logging
-logger = logging.getLogger()
+
 import sqlalchemy as sa
 try:
     from psycopg2 import sql as sql2
@@ -14,6 +14,9 @@ try:
     from psycopg import sql as sql3
 except ImportError:
     sql3 = None
+
+
+logger = logging.getLogger()
 
 
 class _Base:
