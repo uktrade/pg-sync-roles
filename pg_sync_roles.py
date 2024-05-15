@@ -214,8 +214,8 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 
         raise RuntimeError('Unable to find available role name')
 
-    def get_acl_rows(permissions):
-        return tuple(row for row in permissions if row['privilege_type'] in _KNOWN_PRIVILEGES)
+    def get_table_like_acl_rows(permissions):
+        return tuple(row for row in permissions if row['on'] in _TABLE_LIKE and row['privilege_type'] in _KNOWN_PRIVILEGES)
 
     def grant_connect(database_name, role_name):
         logger.info("Granting CONNECT on database %s to role %s", database_name, role_name)
@@ -344,7 +344,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         existing_permissions = get_existing_permissions(role_name) if not role_to_create else []
 
         # Real ACL permissions - we revoke them all
-        acl_permissions_to_revoke = get_acl_rows(existing_permissions)
+        acl_table_permissions_to_revoke = get_table_like_acl_rows(existing_permissions)
 
         # And the ACL-equivalent roles
         database_connect_roles = get_database_connect_roles(database_connects)
@@ -396,7 +396,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             and not logins_to_revoke
             and not schema_ownerships_to_revoke
             and not schema_ownerships_to_grant
-            and not acl_permissions_to_revoke
+            and not acl_table_permissions_to_revoke
         ):
             return
 
@@ -417,7 +417,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         existing_permissions = get_existing_permissions(role_name)
 
         # Real ACL permissions - we revoke them all
-        acl_permissions_to_revoke = get_acl_rows(existing_permissions)
+        acl_table_permissions_to_revoke = get_table_like_acl_rows(existing_permissions)
 
         # Grant or revoke schema ownerships
         schema_ownerships_that_exist = tuple(SchemaOwnership(perm['name_1']) for perm in existing_permissions if perm['on'] == 'schema')
@@ -491,7 +491,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         revoke_memberships(memberships_to_revoke, role_name)
 
         # Revoke permissions on tables
-        acl_table_permissions_to_revoke = tuple(perm for perm in acl_permissions_to_revoke if perm['on'] in _TABLE_LIKE)
+        acl_table_permissions_to_revoke = get_table_like_acl_rows(existing_permissions)
         for perm in acl_table_permissions_to_revoke:
             revoke_table_perm(perm, role_name)
 
