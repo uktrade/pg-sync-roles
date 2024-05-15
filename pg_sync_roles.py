@@ -206,8 +206,8 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 
         raise RuntimeError('Unable to find available role name')
 
-    def get_table_like_acl_rows(permissions):
-        return tuple(row for row in permissions if row['on'] in _TABLE_LIKE and row['privilege_type'] in _KNOWN_PRIVILEGES)
+    def get_acl_rows(permissions, matching_on):
+        return tuple(row for row in permissions if row['on'] in matching_on and row['privilege_type'] in _KNOWN_PRIVILEGES)
 
     def create_role(role_name):
         execute_sql(sql.SQL('CREATE ROLE {role_name};').format(role_name=sql.Identifier(role_name)))
@@ -372,7 +372,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         existing_permissions = get_existing_permissions(role_name) if not role_to_create else []
 
         # Real ACL permissions - we revoke them all
-        acl_table_permissions_to_revoke = get_table_like_acl_rows(existing_permissions)
+        acl_table_permissions_to_revoke = get_acl_rows(existing_permissions, _TABLE_LIKE)
 
         # And the ACL-equivalent roles
         database_connect_roles = get_acl_roles(
@@ -449,9 +449,6 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 
         # Get all existing permissions
         existing_permissions = get_existing_permissions(role_name)
-
-        # Real ACL permissions - we revoke them all
-        acl_table_permissions_to_revoke = get_table_like_acl_rows(existing_permissions)
 
         # Grant or revoke schema ownerships
         schema_ownerships_that_exist = tuple(SchemaOwnership(perm['name_1']) for perm in existing_permissions if perm['on'] == 'schema')
@@ -531,7 +528,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         revoke_memberships(memberships_to_revoke, role_name)
 
         # Revoke permissions on tables
-        acl_table_permissions_to_revoke = get_table_like_acl_rows(existing_permissions)
+        acl_table_permissions_to_revoke = get_acl_rows(existing_permissions, _TABLE_LIKE)
         for perm in acl_table_permissions_to_revoke:
             revoke_table_perm(perm, role_name)
 
