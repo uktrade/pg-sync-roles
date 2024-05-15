@@ -48,6 +48,23 @@ class RoleMembership:
     role_name: str
 
 
+# PostgreSQL grant types
+SELECT = object()
+INSERT = object()
+UPDATE = object()
+DELETE = object()
+TRUNCATE = object()
+REFERENCES = object()
+TRIGGER = object()
+CREATE = object()
+CONNECT = object()
+TEMPORARY = object()
+EXECUTE = object()
+USAGE = object()
+SET  = object()
+ALTER_SYSTEM = object()
+
+
 def sync_roles(conn, role_name, grants=(), lock_key=1):
     def execute_sql(sql_obj):
         # This avoids "argument 1 must be psycopg2.extensions.connection, not PGConnectionProxy"
@@ -198,25 +215,12 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
     def create_schema(schema_name):
         execute_sql(sql.SQL('CREATE SCHEMA {schema_name};').format(schema_name=sql.Identifier(schema_name)))
 
-    def grant_connect(database_name, role_name):
-        logger.info("Granting CONNECT on database %s to role %s", database_name, role_name)
-        execute_sql(sql.SQL('GRANT CONNECT ON DATABASE {database_name} TO {role_name}').format(
-            database_name=sql.Identifier(database_name),
-            role_name=sql.Identifier(role_name),
-        ))
-
-    def grant_usage(schema_name, role_name):
-        logger.info("Granting USAGE on schema %s to role %s", schema_name, role_name)
-        execute_sql(sql.SQL('GRANT USAGE ON SCHEMA {schema_name} TO {role_name}').format(
-            schema_name=sql.Identifier(schema_name),
-            role_name=sql.Identifier(role_name),
-        ))
-
-    def grant_select(schema_name, table_name, role_name):
-        logger.info("Granting SELECT on table %s to role %s", table_name, role_name)
-        execute_sql(sql.SQL('GRANT SELECT ON TABLE {schema_name}.{table_name} TO {role_name}').format(
-            schema_name=sql.Identifier(schema_name),
-            table_name=sql.Identifier(table_name),
+    def grant(grant_type, object_type, object_name, role_name):
+        logger.info("Granting %s on %s %s to role %s", grant_type, object_type, object_name, role_name)
+        execute_sql(sql.SQL('GRANT {grant_type} ON {object_type} {object_name} TO {role_name}').format(
+            grant_type=grant_type,
+            object_type=object_type,
+            object_name=sql.Identifier(*object_name),
             role_name=sql.Identifier(role_name),
         ))
 
@@ -304,6 +308,29 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         'psycopg2': sql2,
         'psycopg': sql3,
     }[conn.engine.driver]
+
+    sql_grants = {
+        SELECT: sql.SQL('SELECT'),
+        INSERT: sql.SQL('INSERT'),
+        UPDATE: sql.SQL('UPDATE'),
+        DELETE: sql.SQL('DELETE'),
+        TRUNCATE: sql.SQL('TRUNCATE'),
+        REFERENCES: sql.SQL('REFERENCES'),
+        TRIGGER: sql.SQL('TRIGGER'),
+        CREATE: sql.SQL('CREATE'),
+        CONNECT: sql.SQL('CONNECT'),
+        TEMPORARY: sql.SQL('TEMPORARY'),
+        EXECUTE: sql.SQL('EXECUTE'),
+        USAGE: sql.SQL('USAGE'),
+        SET: sql.SQL('SET'),
+        ALTER_SYSTEM : sql.SQL('ALTER SYSTEM'),
+    }
+
+    sql_object_types = {
+        TableSelect: sql.SQL('TABLE'),
+        DatabaseConnect: sql.SQL('DATABASE'),
+        SchemaUsage: sql.SQL('SCHEMA'),
+    }
 
     # Split grants by their type
     database_connects = tuple(grant for grant in grants if isinstance(grant, DatabaseConnect))
@@ -447,7 +474,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         for database_name in database_connect_roles_to_create:
             database_connect_role = get_available_acl_role('_pgsr_global_database_connect_')
             create_role(database_connect_role)
-            grant_connect(database_name, database_connect_role)
+            grant(sql_grants[CONNECT], sql_object_types[DatabaseConnect], (database_name,), database_connect_role)
             database_connect_roles[database_name] = database_connect_role
 
         # Create schema usage roles if we need to
@@ -458,7 +485,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         for schema_name in schema_usage_roles_to_create:
             schema_usage_role = get_available_acl_role(f'_pgsr_local_{db_oid}_schema_usage_')
             create_role(schema_usage_role)
-            grant_usage(schema_name, schema_usage_role)
+            grant(sql_grants[USAGE], sql_object_types[SchemaUsage], (schema_name,), schema_usage_role)
             schema_usage_roles[schema_name] = schema_usage_role
 
         # Create table select roles if we need to
@@ -469,7 +496,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         for schema_name, table_name in table_select_roles_to_create:
             table_select_role = get_available_acl_role(f'_pgsr_local_{db_oid}_table_select_')
             create_role(table_select_role)
-            grant_select(schema_name, table_name, table_select_role)
+            grant(sql_grants[SELECT], sql_object_types[TableSelect], (schema_name, table_name), table_select_role)
             table_select_roles[(schema_name, table_name)] = table_select_role
 
         # Grant login if we need to
