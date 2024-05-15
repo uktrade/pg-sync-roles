@@ -16,29 +16,33 @@ except ImportError:
     sql3 = None
 
 
+class _Base:
+    pass
+
+
 @dataclass(frozen=True)
-class DatabaseConnect:
+class DatabaseConnect(_Base):
     database_name: str
 
 
 @dataclass(frozen=True)
-class SchemaUsage:
+class SchemaUsage(_Base):
     schema_name: str
 
 
 @dataclass(frozen=True)
-class TableSelect:
+class TableSelect(_Base):
     schema_name: str
     table_name: str
 
 
 @dataclass(frozen=True)
-class SchemaOwnership:
+class SchemaOwnership(_Base):
     schema_name: str
 
 
 @dataclass(frozen=True)
-class Login:
+class Login(_Base):
     valid_until: datetime = None
     password: str = None
 
