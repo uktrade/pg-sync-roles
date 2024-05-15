@@ -174,7 +174,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
                 LEFT JOIN (
                     SELECT nspname AS schema_name, relname AS table_name, grantee
                     FROM pg_class
-                    INNER JOIN pg_namespace ON pg_namespace.oid = pg_namespace.oid
+                    INNER JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace
                     CROSS JOIN aclexplode(relacl)
                     WHERE grantee::regrole::text LIKE {role_pattern}
                     AND privilege_type = 'SELECT'
