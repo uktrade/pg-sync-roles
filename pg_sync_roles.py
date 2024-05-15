@@ -338,10 +338,10 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         table_selects = tuple(table_select for table_select in table_selects if (table_select.schema_name, table_select.table_name) in tables_that_exist)
 
         # Find if we need to make the role
-        role_needed = not get_role_exists(role_name)
+        role_to_create = not get_role_exists(role_name)
 
         # Get all existing permissions
-        existing_permissions = get_existing_permissions(role_name) if not role_needed else []
+        existing_permissions = get_existing_permissions(role_name) if not role_to_create else []
 
         # Real ACL permissions - we revoke them all
         acl_permissions_to_revoke = get_acl_rows(existing_permissions)
@@ -383,7 +383,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 
         # If we don't need to do anything, we're done.
         if (
-            not role_needed
+            not role_to_create
             and not database_connect_roles_needed
             and not schema_usage_roles_needed
             and not table_select_roles_needed
@@ -404,8 +404,8 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         lock()
 
         # Make the role if we need to
-        role_needed = not get_role_exists(role_name)
-        if role_needed:
+        role_to_create = not get_role_exists(role_name)
+        if role_to_create:
             create_role(role_name)
 
         # Find existing objects where needed
