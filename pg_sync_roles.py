@@ -356,8 +356,8 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 
         # Ownerships to grant and revoke
         existing_schema_ownerships = tuple(perm['name_1'] for perm in existing_permissions if perm['on'] == 'schema')
-        schema_ownership_names_exact = set(schema_ownership.schema_name for schema_ownership in schema_ownerships)
-        schema_names_to_revoke_ownership = tuple(schema_name for schema_name in existing_schema_ownerships if schema_name not in schema_ownership_names_exact)
+        schema_ownership_names = set(schema_ownership.schema_name for schema_ownership in schema_ownerships)
+        schema_names_to_revoke_ownership = tuple(schema_name for schema_name in existing_schema_ownerships if schema_name not in schema_ownership_names)
         schema_ownerships_to_grant_ownership = tuple(schema_ownership for schema_ownership in schema_ownerships if schema_ownership.schema_name not in existing_schema_ownerships)
 
         # And any memberships of the database connect roles or explicitly requested role memberships
@@ -421,8 +421,8 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 
         # Grant or revoke schema ownerships
         existing_schema_ownerships = tuple(perm['name_1'] for perm in existing_permissions if perm['on'] == 'schema')
-        schema_ownership_names_exact = set(schema_ownership.schema_name for schema_ownership in schema_ownerships)
-        schema_names_to_revoke_ownership = tuple(schema_name for schema_name in existing_schema_ownerships if schema_name not in schema_ownership_names_exact)
+        schema_ownership_names = set(schema_ownership.schema_name for schema_ownership in schema_ownerships)
+        schema_names_to_revoke_ownership = tuple(schema_name for schema_name in existing_schema_ownerships if schema_name not in schema_ownership_names)
         schema_ownerships_to_grant_ownership = tuple(schema_ownership for schema_ownership in schema_ownerships if schema_ownership.schema_name not in existing_schema_ownerships)
         for schema_name in schema_names_to_revoke_ownership:
             revoke_schema_ownership(schema_name)
