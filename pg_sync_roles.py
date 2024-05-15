@@ -20,35 +20,55 @@ class _Base:
     pass
 
 
+# Grant corresponding to ACL on a row in a catalog table
+class _ACL(_Base):
+    pass
+
+
+# Grant corresponding to ownership of a row in a catalog table
+class _Ownership(_Base):
+    pass
+
+
+# Grant corresponding to a property of the the role in pg_roles
+class _RoleProperty(_Base):
+    pass
+
+
+# Grant corresponding to a membership of a role
+class _RoleMembership(_Base):
+    pass
+
+
 @dataclass(frozen=True)
-class DatabaseConnect(_Base):
+class DatabaseConnect(_ACL):
     database_name: str
 
 
 @dataclass(frozen=True)
-class SchemaUsage(_Base):
+class SchemaUsage(_ACL):
     schema_name: str
 
 
 @dataclass(frozen=True)
-class TableSelect(_Base):
+class TableSelect(_ACL):
     schema_name: str
     table_name: str
 
 
 @dataclass(frozen=True)
-class SchemaOwnership(_Base):
+class SchemaOwnership(_Ownership):
     schema_name: str
 
 
 @dataclass(frozen=True)
-class Login(_Base):
+class Login(_RoleProperty):
     valid_until: datetime = None
     password: str = None
 
 
 @dataclass(frozen=True)
-class RoleMembership:
+class RoleMembership(_RoleMembership):
     role_name: str
 
 
