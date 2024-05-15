@@ -108,55 +108,35 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             )
         )).fetchall()
 
-    def get_database_connect_roles(database_connects):
-        database_name_role_names = \
-            [] if not database_connects else \
+    def get_acl_roles(privilege_type, table_name, row_name_column_name, acl_column_name, role_pattern, row_names):
+        row_name_role_names = \
+            [] if not row_names else \
             execute_sql(sql.SQL("""
-                SELECT database_name, grantee::regrole
+                SELECT row_names.name, grantee::regrole
                 FROM (
-                    VALUES {database_names}
-                ) dn(database_name)
+                    VALUES {row_names}
+                ) row_names(name)
                 LEFT JOIN (
-                    SELECT datname, grantee
-                    FROM pg_database, aclexplode(datacl)
-                    WHERE grantee::regrole::text LIKE '\\_pgsr\\_global\\_database\\_connect\\_%'
-                    AND privilege_type = 'CONNECT'
-                ) grantees ON grantees.datname = dn.database_name
-            """).format(database_names=sql.SQL(',').join(
-                sql.SQL('({})').format(sql.Literal(database_connect.database_name))
-                for database_connect in database_connects
-            ))).fetchall()
-
-        return {
-            database_name: role_name
-            for database_name, role_name in database_name_role_names
-        }
-
-    def get_schema_usage_roles(db_oid, schema_usages):
-        schema_name_role_names = \
-            [] if not schema_usages else \
-            execute_sql(sql.SQL("""
-                SELECT schema_name, grantee::regrole
-                FROM (
-                    VALUES {schema_names}
-                ) sc(schema_name)
-                LEFT JOIN (
-                    SELECT nspname, grantee
-                    FROM pg_namespace, aclexplode(nspacl)
+                    SELECT {row_name_column_name}, grantee
+                    FROM {table_name}, aclexplode({acl_column_name})
                     WHERE grantee::regrole::text LIKE {role_pattern}
-                    AND privilege_type = 'USAGE'
-                ) grantees ON grantees.nspname = sc.schema_name
+                    AND privilege_type = {privilege_type}
+                ) grantees ON grantees.{row_name_column_name} = row_names.name
             """).format(
-                role_pattern=sql.Literal(f'\\_pgsr\\_local\\_{db_oid}_\\schema\\_usage\\_%'),
-                schema_names=sql.SQL(',').join(
-                    sql.SQL('({})').format(sql.Literal(schema_usage.schema_name))
-                    for schema_usage in schema_usages
-                ))
-        ).fetchall()
+                privilege_type=sql.Literal(privilege_type),
+                table_name=sql.Identifier(table_name),
+                row_name_column_name=sql.Identifier(row_name_column_name),
+                acl_column_name=sql.Identifier(acl_column_name),
+                role_pattern=sql.Literal(role_pattern),
+                row_names=sql.SQL(',').join(
+                    sql.SQL('({})').format(sql.Literal(row_name))
+                    for row_name in row_names
+                )
+            )).fetchall()
 
         return {
-            schema_name: role_name
-            for schema_name, role_name in schema_name_role_names
+            row_name: role_name
+            for row_name, role_name in row_name_role_names
         }
 
     def get_table_select_roles(db_oid, table_selects):
@@ -313,8 +293,11 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
     role_memberships = tuple(grant for grant in grants if isinstance(grant, RoleMembership))
 
     # Gather names of related grants (used for example to check if things exist)
-    all_schema_names = tuple(grant.schema_name for grant in schema_usages + schema_ownerships)
-    all_database_names = tuple(grant.database_name for grant in database_connects)
+    all_database_connect_names = tuple(grant.database_name for grant in database_connects)
+    all_database_names = all_database_connect_names
+    all_schema_usage_names = tuple(grant.schema_name for grant in schema_usages)
+    all_schema_ownership_names = tuple(grant.schema_name for grant in schema_ownerships)
+    all_schema_names = all_schema_usage_names + all_schema_ownership_names
     all_table_names = tuple((grant.schema_name, grant.table_name) for grant in table_selects)
 
     # Validation
@@ -345,9 +328,13 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         acl_table_permissions_to_revoke = get_table_like_acl_rows(existing_permissions)
 
         # And the ACL-equivalent roles
-        database_connect_roles = get_database_connect_roles(database_connects)
+        database_connect_roles = get_acl_roles(
+            'CONNECT', 'pg_database', 'datname', 'datacl', '\\_pgsr\\_global\\_database\\_connect\\_%',
+            all_database_connect_names)
         database_connect_roles_to_create = keys_with_none_value(database_connect_roles)
-        schema_usage_roles = get_schema_usage_roles(db_oid, schema_usages)
+        schema_usage_roles = get_acl_roles(
+            'USAGE', 'pg_namespace', 'nspname', 'nspacl', f'\\_pgsr\\_local\\_{db_oid}_\\schema\\_usage\\_%',
+            all_schema_usage_names)
         schema_usage_roles_to_create = keys_with_none_value(schema_usage_roles)
         table_select_roles = get_table_select_roles(db_oid, table_selects)
         table_select_roles_to_create = keys_with_none_value(table_select_roles)
@@ -429,7 +416,9 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             grant_schema_ownership(role_name, schema_ownership.schema_name)
 
         # Create database connect roles if we need to
-        database_connect_roles = get_database_connect_roles(database_connects)
+        database_connect_roles = get_acl_roles(
+            'CONNECT', 'pg_database', 'datname', 'datacl', '\\_pgsr\\_global\\_database\\_connect\\_%',
+            all_database_connect_names)
         database_connect_roles_to_create = keys_with_none_value(database_connect_roles)
         for database_name in database_connect_roles_to_create:
             database_connect_role = get_available_acl_role('_pgsr_global_database_connect_')
@@ -438,7 +427,9 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             database_connect_roles[database_name] = database_connect_role
 
         # Create schema usage roles if we need to
-        schema_usage_roles = get_schema_usage_roles(db_oid, schema_usages)
+        schema_usage_roles = get_acl_roles(
+            'USAGE', 'pg_namespace', 'nspname', 'nspacl', f'\\_pgsr\\_local\\_{db_oid}_\\schema\\_usage\\_%',
+            all_schema_usage_names)
         schema_usage_roles_to_create = keys_with_none_value(schema_usage_roles)
         for schema_name in schema_usage_roles_to_create:
             schema_usage_role = get_available_acl_role(f'_pgsr_local_{db_oid}_schema_usage_')
