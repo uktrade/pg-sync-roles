@@ -1,3 +1,4 @@
+from enum import Enum
 from contextlib import contextmanager
 from dataclasses import dataclass, is_dataclass
 from datetime import datetime
@@ -14,6 +15,39 @@ try:
     from psycopg import sql as sql3
 except ImportError:
     sql3 = None
+
+
+class Privilege(Enum):
+    SELECT = 1
+    INSERT = 2
+    UPDATE = 3
+    DELETE = 4
+    TRUNCATE = 5
+    REFERENCES = 6
+    TRIGGER = 7
+    CREATE = 8
+    CONNECT = 9
+    TEMPORARY = 10
+    EXECUTE = 11
+    USAGE = 12
+    SET = 13
+    ALTER_SYSTEM = 14
+
+
+SELECT = Privilege.SELECT
+INSERT = Privilege.INSERT
+UPDATE = Privilege.UPDATE
+DELETE = Privilege.DELETE
+TRUNCATE = Privilege.TRUNCATE
+REFERENCES = Privilege.REFERENCES
+TRIGGER = Privilege.TRIGGER
+CREATE = Privilege.CREATE
+CONNECT = Privilege.CONNECT
+TEMPORARY = Privilege.TEMPORARY
+EXECUTE = Privilege.EXECUTE
+USAGE = Privilege.USAGE
+SET = Privilege.SET
+ALTER_SYSTEM = Privilege.ALTER_SYSTEM
 
 
 @dataclass(frozen=True)
@@ -46,23 +80,6 @@ class Login:
 @dataclass(frozen=True)
 class RoleMembership:
     role_name: str
-
-
-# PostgreSQL grant types
-SELECT = object()
-INSERT = object()
-UPDATE = object()
-DELETE = object()
-TRUNCATE = object()
-REFERENCES = object()
-TRIGGER = object()
-CREATE = object()
-CONNECT = object()
-TEMPORARY = object()
-EXECUTE = object()
-USAGE = object()
-SET  = object()
-ALTER_SYSTEM = object()
 
 
 def sync_roles(conn, role_name, grants=(), lock_key=1):
