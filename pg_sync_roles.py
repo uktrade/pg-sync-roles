@@ -291,7 +291,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         if perm['privilege_type'] not in _KNOWN_PRIVILEGES:
             raise RuntimeError('Unknown privilege')
 
-        CURRENT_USER = execute_sql(sql.SQL('SELECT CURRENT_USER')).fetchall()[0][0]
+        current_user = execute_sql(sql.SQL('SELECT CURRENT_USER')).fetchall()[0][0]
         table_owner = execute_sql(sql.SQL(
             '''
             SELECT rolname FROM pg_class c
@@ -305,7 +305,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             table_name=sql.Literal(perm['name_2']),
         )).fetchall()[0][0]
 
-        if CURRENT_USER != table_owner:
+        if current_user != table_owner:
             execute_sql(sql.SQL('GRANT {table_owner} TO CURRENT_USER').format(
                 table_owner=sql.Identifier(table_owner)
             ))
@@ -317,7 +317,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             role_name=sql.Identifier(role_name),
         ))
 
-        if CURRENT_USER != table_owner:
+        if current_user != table_owner:
             execute_sql(sql.SQL('REVOKE {table_owner} FROM CURRENT_USER').format(
                 table_owner=sql.Identifier(table_owner)
             ))
