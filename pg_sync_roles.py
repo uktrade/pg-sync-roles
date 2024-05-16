@@ -2,7 +2,7 @@ from enum import Enum
 from contextlib import contextmanager
 from dataclasses import dataclass, is_dataclass
 from datetime import datetime
-from typing import Union
+from typing import ClassVar, Union
 from uuid import uuid4
 
 import logging
@@ -75,27 +75,60 @@ class _LocalGrantMixin():
 
 
 class _CatalogTableGrant(_BaseGrant):
-    pass
+    catalog_table: ClassVar[str]
+    name_column: ClassVar[str]
+    acl_column: ClassVar[str]
+    acl_role_sql_pattern = ClassVar[str]
+    acl_role_python_base = ClassVar[str]
+
+    privilege: Union[ACLPrivilege, OwnerPrivilege]
 
 
 class _InSchemaGrant(_CatalogTableGrant):
-    pass
+    catalog_table: ClassVar[str]
+    name_column: ClassVar[str]
+    acl_column: ClassVar[str]
+    acl_role_sql_pattern = ClassVar[str]
+    acl_role_python_base = ClassVar[str]
+    namespace_column: ClassVar[str]
+
+    privilege: Union[ACLPrivilege, OwnerPrivilege]
+    schema_name: str
 
 
 @dataclass(frozen=True)
 class DatabaseGrant(_CatalogTableGrant, _GlobalGrantMixin):
+    catalog_table: ClassVar[str] = 'pg_database'
+    name_column: ClassVar[str] = 'datname'
+    acl_column: ClassVar[str] = 'datacl'
+    acl_role_sql_pattern: ClassVar[str] = '\\_pgsr\\_global\\_database\\_connect\\_%'
+    acl_role_python_base: ClassVar[str] = '_pgsr_global_database_connect_'
+
     privilege: Union[ACLPrivilege, OwnerPrivilege]
     database_name: str
 
 
 @dataclass(frozen=True)
 class SchemaGrant(_CatalogTableGrant, _LocalGrantMixin):
+    catalog_table: ClassVar[str] = 'pg_namespace'
+    name_column: ClassVar[str] = 'nspname'
+    acl_column: ClassVar[str] = 'nspacl'
+    acl_role_sql_pattern: ClassVar[str] = '\\_pgsr\\_local\\_{db_oid}_\\schema\\_usage\\_%'
+    acl_role_python_base: ClassVar[str] = '_pgsr_local_{db_oid}_schema_usage_'
+
     privilege: Union[ACLPrivilege, OwnerPrivilege]
     schema_name: str
 
 
 @dataclass(frozen=True)
 class TableGrant(_InSchemaGrant, _LocalGrantMixin):
+    catalog_table: ClassVar[str] = 'pg_class'
+    name_column: ClassVar[str] = 'relname'
+    acl_column: ClassVar[str] = 'relacl'
+    acl_role_sql_pattern: ClassVar[str] = '_pgsr_local_{db_oid}_table_select_%',
+    acl_role_python_base: ClassVar[str] = '_pgsr_local_{db_oid}_table_select_',
+    namespace_column: ClassVar[str] = 'relnamespace'
+
     privilege: Union[ACLPrivilege, OwnerPrivilege]
     schema_name: str
     table_name: str
@@ -424,6 +457,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
     }
 
     # Split grants by their type
+
     database_connects = tuple(grant for grant in grants if isinstance(grant, DatabaseConnect))
     schema_usages = tuple(grant for grant in grants if isinstance(grant, SchemaUsage))
     schema_ownerships = tuple(grant for grant in grants if isinstance(grant, SchemaOwnership))
