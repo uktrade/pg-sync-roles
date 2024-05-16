@@ -883,6 +883,37 @@ def test_direct_table_permission_can_be_revoked_when_not_owner(test_engine, test
             assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
 
 
+def test_default_table_permission_from_ownership_revoked(test_engine, test_table):
+    schema_name, table_name = test_table
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+
+    role_engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=())
+
+    with test_engine.begin() as conn:
+        conn.execute(sa.text(f'GRANT {role_name} TO CURRENT_USER'))
+        conn.execute(sa.text(f'GRANT CREATE ON SCHEMA {schema_name} TO {role_name}'))
+        conn.execute(sa.text(f'ALTER TABLE {schema_name}.{table_name} OWNER TO {role_name}'))
+
+        # .. and then tidy up the temporary perms
+        conn.execute(sa.text(f'REVOKE {role_name} FROM CURRENT_USER'))
+        conn.execute(sa.text(f'REVOKE CREATE ON SCHEMA {schema_name} FROM {role_name}'))
+
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaUsage(schema_name),
+        ))
+
+    with role_engine.connect() as conn:
+        with pytest.raises(sa.exc.ProgrammingError, match='permission denied for (table|relation)'):
+            assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
+
+
 def test_direct_view_permission_is_revoked(test_engine, test_view):
     schema_name, view_name = test_view
     role_name = get_test_role()
