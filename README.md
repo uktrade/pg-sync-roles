@@ -104,7 +104,7 @@ with engine.connect() as conn:
 
 ### Core function
 
-#### `sync_roles(conn, role_name, grants=(), lock_key=1)`
+#### `sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(), lock_key=1)`
 
 - `conn`
 
@@ -117,6 +117,12 @@ with engine.connect() as conn:
 - `grants=()`
 
    A tuple of grants of all permissions that the role specified by the `role_name` should have. Anything not in this list will be automatically revoked. See [Grant types](#grant-types) for the list of grant types.
+
+- `preserve_existing_grants_in_schemas=()`
+
+   A tuple of schema names. For each schema name `sync_roles` will leave any existing privileges granted on anything in the schema to `role_name` intact. This is useful in situations when the contents of the schemas are managed separately, outside of calls to `sync_roles`.
+
+   A schema name being listed in `preserve_existing_grants_in_schemas` does not affect management of permissions on the the schema itself. In order for `role_name` to have privileges on these, they will have to be passed in via the `grants` parameter.
 
 - `lock_key=1`
 

@@ -1056,3 +1056,64 @@ def test_schema_create_roles_can_create_sequence(test_engine, test_view):
     engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
     with engine.begin() as conn:
         conn.execute(sa.text(f'CREATE SEQUENCE {schema_name}.{sequence_name} START 101;'))
+
+
+def test_team_role_privileges_are_preserved(test_engine):
+    # Tries to emulate a feature of Data Workspace https://github.com/uktrade/data-workspace-frontend,
+    # where users have membership of "team roles" with associated team schemas. The team schemas
+    # have default privileges that should grant the team role all privileges on new tables within
+    # them created by their members. This test asserts that privileges are not lost because of this
+    # process.
+
+    role_name_1 = get_test_role()
+    role_name_2 = get_test_role()
+    team_role_name = get_test_role()
+    team_schema_name = team_role_name
+
+    def sync_role_with_team(role_name):
+        with test_engine.connect() as conn:
+            valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+            sync_roles(conn, role_name, grants=(
+                Login(valid_until=valid_until, password='password'),
+                DatabaseConnect(TEST_DATABASE_NAME),
+                RoleMembership(team_role_name),
+            ))
+            sync_roles(conn, team_role_name, preserve_existing_grants_in_schemas=(team_schema_name,), grants=(
+                SchemaOwnership(team_schema_name),
+                SchemaUsage(team_schema_name),
+                SchemaCreate(team_schema_name),
+            ))
+            conn.execute(sa.text(f'''
+                GRANT "{role_name}", "{team_schema_name}" TO CURRENT_USER
+            '''))
+            conn.execute(sa.text(f'''
+                ALTER DEFAULT PRIVILEGES
+                FOR USER "{role_name}"
+                IN SCHEMA "{team_schema_name}"
+                GRANT ALL ON TABLES TO "{team_role_name}"
+            '''))
+            conn.execute(sa.text(f'''
+                REVOKE "{role_name}", "{team_schema_name}" FROM CURRENT_USER
+            '''))
+            conn.commit()
+
+    sync_role_with_team(role_name_1)
+    sync_role_with_team(role_name_2)
+
+    role_name_1_engine = sa.create_engine(f'{engine_type}://{role_name_1}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    role_name_2_engine = sa.create_engine(f'{engine_type}://{role_name_2}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}',  **engine_future)
+    team_table_name = 'test_table_' + uuid.uuid4().hex
+
+    with role_name_1_engine.begin() as conn:
+        conn.execute(sa.text(f'CREATE TABLE {team_schema_name}.{team_table_name} (id int)'))
+
+    with role_name_1_engine.connect() as conn:
+        assert conn.execute(sa.text(f"SELECT count(*) FROM {team_schema_name}.{team_table_name}")).fetchall()[0][0] == 0
+
+    with role_name_2_engine.connect() as conn:
+        assert conn.execute(sa.text(f"SELECT count(*) FROM {team_schema_name}.{team_table_name}")).fetchall()[0][0] == 0
+
+    sync_role_with_team(role_name_2)
+
+    with role_name_2_engine.connect() as conn:
+        assert conn.execute(sa.text(f"SELECT count(*) FROM {team_schema_name}.{team_table_name}")).fetchall()[0][0] == 0
