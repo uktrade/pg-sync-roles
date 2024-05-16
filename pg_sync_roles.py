@@ -63,18 +63,22 @@ class _BaseGrant():
     pass
 
 
-class _InSchemaGrant(_BaseGrant):
+class _CatalogTableGrant(_BaseGrant):
+    pass
+
+
+class _InSchemaGrant(_CatalogTableGrant):
     pass
 
 
 @dataclass(frozen=True)
-class DatabaseGrant(_BaseGrant):
+class DatabaseGrant(_CatalogTableGrant):
     privilege: Union[ACLPrivilege, OwnerPrivilege]
     database_name: str
 
 
 @dataclass(frozen=True)
-class SchemaGrant(_BaseGrant):
+class SchemaGrant(_CatalogTableGrant):
     privilege: Union[ACLPrivilege, OwnerPrivilege]
     schema_name: str
 
