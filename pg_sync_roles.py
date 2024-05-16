@@ -59,7 +59,18 @@ ALTER_SYSTEM = ACLPrivilege.ALTER_SYSTEM
 OWNER = OwnerPrivilege.OWNER
 
 
+# Base class for all grants
 class _BaseGrant():
+    pass
+
+
+# Mixin to identify grants in the global database
+class _GlobalGrantMixin():
+    pass
+
+
+# Mixin to identify grants in the local database
+class _LocalGrantMixin():
     pass
 
 
@@ -72,19 +83,19 @@ class _InSchemaGrant(_CatalogTableGrant):
 
 
 @dataclass(frozen=True)
-class DatabaseGrant(_CatalogTableGrant):
+class DatabaseGrant(_CatalogTableGrant, _GlobalGrantMixin):
     privilege: Union[ACLPrivilege, OwnerPrivilege]
     database_name: str
 
 
 @dataclass(frozen=True)
-class SchemaGrant(_CatalogTableGrant):
+class SchemaGrant(_CatalogTableGrant, _LocalGrantMixin):
     privilege: Union[ACLPrivilege, OwnerPrivilege]
     schema_name: str
 
 
 @dataclass(frozen=True)
-class TableGrant(_InSchemaGrant):
+class TableGrant(_InSchemaGrant, _LocalGrantMixin):
     privilege: Union[ACLPrivilege, OwnerPrivilege]
     schema_name: str
     table_name: str
@@ -112,13 +123,13 @@ class TableSelect(TableGrant):
 
 
 @dataclass(frozen=True)
-class Login(_BaseGrant):
+class Login(_BaseGrant, _GlobalGrantMixin):
     valid_until: datetime = None
     password: str = None
 
 
 @dataclass(frozen=True)
-class RoleMembership(_BaseGrant):
+class RoleMembership(_BaseGrant, _GlobalGrantMixin):
     role_name: str
 
 
