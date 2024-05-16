@@ -50,35 +50,39 @@ SET = Privilege.SET
 ALTER_SYSTEM = Privilege.ALTER_SYSTEM
 
 
+class _BaseGrant():
+    pass
+
+
 @dataclass(frozen=True)
-class DatabaseConnect:
+class DatabaseConnect(_BaseGrant):
     database_name: str
 
 
 @dataclass(frozen=True)
-class SchemaUsage:
+class SchemaUsage(_BaseGrant):
     schema_name: str
 
 
 @dataclass(frozen=True)
-class SchemaOwnership:
+class SchemaOwnership(_BaseGrant):
     schema_name: str
 
 
 @dataclass(frozen=True)
-class TableSelect:
+class TableSelect(_BaseGrant):
     schema_name: str
     table_name: str
 
 
 @dataclass(frozen=True)
-class Login:
+class Login(_BaseGrant):
     valid_until: datetime = None
     password: str = None
 
 
 @dataclass(frozen=True)
-class RoleMembership:
+class RoleMembership(_BaseGrant):
     role_name: str
 
 
