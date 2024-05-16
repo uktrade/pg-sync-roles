@@ -767,6 +767,7 @@ def test_schema_ownership_can_be_granted(test_engine, test_table):
     with test_engine.connect() as conn:
         assert conn.execute(sa.text(f"SELECT nspowner::regrole FROM pg_namespace WHERE nspname='{schema_name}'")).fetchall()[0][0] == role_name
 
+
 def test_schema_ownership_can_be_revoked(test_engine, test_table):
     schema_name, table_name = test_table
     role_name = get_test_role()
@@ -778,6 +779,30 @@ def test_schema_ownership_can_be_revoked(test_engine, test_table):
 
     with test_engine.connect() as conn:
         assert conn.execute(sa.text(f"SELECT nspowner::regrole::name = CURRENT_USER FROM pg_namespace WHERE nspname='{schema_name}'")).fetchall()[0][0]
+
+
+def test_schema_ownership_and_usage(test_engine, test_table):
+    # Regression test of a bug
+    schema_name, table_name = test_table
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+  
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaOwnership(schema_name),
+            SchemaUsage(schema_name),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with engine.connect() as conn:
+        assert conn.execute(sa.text(f"SELECT nspowner::regrole::name FROM pg_namespace WHERE nspname='{schema_name}'")).fetchall()[0][0] == role_name
+
+        # If we didn't have USAGE, the exception would mention schema permission
+        with pytest.raises(sa.exc.ProgrammingError, match='permission denied for (table|relation)'):
+            assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
+
 
 def test_ownership_if_schema_does_not_exist(test_engine):
     schema_name = 'test_schema_' + uuid.uuid4().hex
