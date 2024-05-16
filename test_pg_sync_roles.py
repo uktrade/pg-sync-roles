@@ -24,7 +24,7 @@ from pg_sync_roles import sync_roles, DatabaseConnect, SchemaUsage, TableSelect,
 
 # By 4000 roles having permission to something, we get "row is too big" errors, so it's a good
 # number to test on to make sure we don't hit that issue
-ROLES_PER_TEST = 4
+ROLES_PER_TEST = 4000
 
 # The default/root database that comes with the PostgreSQL Docker image
 ROOT_DATABASE_NAME = 'postgres'
