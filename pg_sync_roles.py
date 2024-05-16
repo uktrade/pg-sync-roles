@@ -226,7 +226,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
 
     def grant_ownership(object_type, role_name, object_name):
         logger.info("Granting OWNERSHIP on %s %s to role %s", object_type, object_name, role_name)
-        execute_sql(sql.SQL('GRANT {role_name} TO SESSION_USER').format(
+        execute_sql(sql.SQL('GRANT {role_name} TO CURRENT_USER').format(
             role_name=sql.Identifier(role_name),
         ))
         execute_sql(sql.SQL('ALTER {object_type} {object_name} OWNER TO {role_name}').format(
@@ -234,20 +234,20 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             role_name=sql.Identifier(role_name),
             object_name=sql.Identifier(object_name),
         ))
-        execute_sql(sql.SQL('REVOKE {role_name} FROM SESSION_USER').format(
+        execute_sql(sql.SQL('REVOKE {role_name} FROM CURRENT_USER').format(
             role_name=sql.Identifier(role_name),
         ))
 
     def revoke_ownership(object_type, role_name, object_name):
         logger.info("Revoking schema ownership of %s %s from role %s", object_type, object_name, role_name)
-        execute_sql(sql.SQL('GRANT {role_name} TO SESSION_USER').format(
+        execute_sql(sql.SQL('GRANT {role_name} TO CURRENT_USER').format(
             role_name=sql.Identifier(role_name),
         ))
-        execute_sql(sql.SQL('ALTER {object_type} {object_name} OWNER TO SESSION_USER').format(
+        execute_sql(sql.SQL('ALTER {object_type} {object_name} OWNER TO CURRENT_USER').format(
             object_type=object_type,
             object_name=sql.Identifier(object_name),
         ))
-        execute_sql(sql.SQL('REVOKE {role_name} FROM SESSION_USER').format(
+        execute_sql(sql.SQL('REVOKE {role_name} FROM CURRENT_USER').format(
             role_name=sql.Identifier(role_name),
         ))
 
@@ -291,7 +291,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         if perm['privilege_type'] not in _KNOWN_PRIVILEGES:
             raise RuntimeError('Unknown privilege')
 
-        session_user = execute_sql(sql.SQL('SELECT SESSION_USER')).fetchall()[0][0]
+        CURRENT_USER = execute_sql(sql.SQL('SELECT CURRENT_USER')).fetchall()[0][0]
         table_owner = execute_sql(sql.SQL(
             '''
             SELECT rolname FROM pg_class c
@@ -305,8 +305,8 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             table_name=sql.Literal(perm['name_2']),
         )).fetchall()[0][0]
 
-        if session_user != table_owner:
-            execute_sql(sql.SQL('GRANT {table_owner} TO SESSION_USER').format(
+        if CURRENT_USER != table_owner:
+            execute_sql(sql.SQL('GRANT {table_owner} TO CURRENT_USER').format(
                 table_owner=sql.Identifier(table_owner)
             ))
 
@@ -317,8 +317,8 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             role_name=sql.Identifier(role_name),
         ))
 
-        if session_user != table_owner:
-            execute_sql(sql.SQL('REVOKE {table_owner} FROM SESSION_USER').format(
+        if CURRENT_USER != table_owner:
+            execute_sql(sql.SQL('REVOKE {table_owner} FROM CURRENT_USER').format(
                 table_owner=sql.Identifier(table_owner)
             ))
 
