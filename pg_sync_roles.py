@@ -2,9 +2,13 @@ from enum import Enum
 from contextlib import contextmanager
 from dataclasses import dataclass, is_dataclass
 from datetime import datetime
+from typing import Union
 from uuid import uuid4
+
 import logging
 logger = logging.getLogger()
+
+
 import sqlalchemy as sa
 try:
     from psycopg2 import sql as sql2
@@ -17,7 +21,7 @@ except ImportError:
     sql3 = None
 
 
-class Privilege(Enum):
+class ACLPrivilege(Enum):
     SELECT = 1
     INSERT = 2
     UPDATE = 3
@@ -34,45 +38,73 @@ class Privilege(Enum):
     ALTER_SYSTEM = 14
 
 
-SELECT = Privilege.SELECT
-INSERT = Privilege.INSERT
-UPDATE = Privilege.UPDATE
-DELETE = Privilege.DELETE
-TRUNCATE = Privilege.TRUNCATE
-REFERENCES = Privilege.REFERENCES
-TRIGGER = Privilege.TRIGGER
-CREATE = Privilege.CREATE
-CONNECT = Privilege.CONNECT
-TEMPORARY = Privilege.TEMPORARY
-EXECUTE = Privilege.EXECUTE
-USAGE = Privilege.USAGE
-SET = Privilege.SET
-ALTER_SYSTEM = Privilege.ALTER_SYSTEM
+class OwnerPrivilege(Enum):
+    OWNER = 1
+
+
+SELECT = ACLPrivilege.SELECT
+INSERT = ACLPrivilege.INSERT
+UPDATE = ACLPrivilege.UPDATE
+DELETE = ACLPrivilege.DELETE
+TRUNCATE = ACLPrivilege.TRUNCATE
+REFERENCES = ACLPrivilege.REFERENCES
+TRIGGER = ACLPrivilege.TRIGGER
+CREATE = ACLPrivilege.CREATE
+CONNECT = ACLPrivilege.CONNECT
+TEMPORARY = ACLPrivilege.TEMPORARY
+EXECUTE = ACLPrivilege.EXECUTE
+USAGE = ACLPrivilege.USAGE
+SET = ACLPrivilege.SET
+ALTER_SYSTEM = ACLPrivilege.ALTER_SYSTEM
+OWNER = OwnerPrivilege.OWNER
 
 
 class _BaseGrant():
     pass
 
 
+class _InSchemaGrant(_BaseGrant):
+    pass
+
+
 @dataclass(frozen=True)
-class DatabaseConnect(_BaseGrant):
+class DatabaseGrant(_BaseGrant):
+    privilege: Union[ACLPrivilege, OwnerPrivilege]
     database_name: str
 
 
 @dataclass(frozen=True)
-class SchemaUsage(_BaseGrant):
+class SchemaGrant(_BaseGrant):
+    privilege: Union[ACLPrivilege, OwnerPrivilege]
     schema_name: str
 
 
 @dataclass(frozen=True)
-class SchemaOwnership(_BaseGrant):
-    schema_name: str
-
-
-@dataclass(frozen=True)
-class TableSelect(_BaseGrant):
+class TableGrant(_InSchemaGrant):
+    privilege: Union[ACLPrivilege, OwnerPrivilege]
     schema_name: str
     table_name: str
+
+
+class DatabaseConnect(DatabaseGrant):
+    def __init__(self, database_name: str):
+        super().__init__(CONNECT, database_name)
+
+
+class SchemaUsage(SchemaGrant):
+    schema_name: str
+    def __init__(self, schema_name: str):
+        super().__init__(USAGE, schema_name)
+
+
+class SchemaOwnership(SchemaGrant):
+    def __init__(self, schema_name: str):
+        super().__init__(OWNER, schema_name)
+
+
+class TableSelect(TableGrant):
+    def __init__(self, schema_name: str, table_name: str):
+        super().__init__(SELECT, schema_name, table_name)
 
 
 @dataclass(frozen=True)
