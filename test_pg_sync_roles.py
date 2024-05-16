@@ -777,7 +777,7 @@ def test_schema_ownership_can_be_revoked(test_engine, test_table):
         sync_roles(conn, role_name, grants=())
 
     with test_engine.connect() as conn:
-        assert conn.execute(sa.text(f"SELECT nspowner::regrole::name = SESSION_USER FROM pg_namespace WHERE nspname='{schema_name}'")).fetchall()[0][0]
+        assert conn.execute(sa.text(f"SELECT nspowner::regrole::name = CURRENT_USER FROM pg_namespace WHERE nspname='{schema_name}'")).fetchall()[0][0]
 
 def test_ownership_if_schema_does_not_exist(test_engine):
     schema_name = 'test_schema_' + uuid.uuid4().hex
@@ -834,14 +834,14 @@ def test_direct_table_permission_can_be_revoked_when_not_owner(test_engine, test
         # to test_name_2. But in order to to that we have
 
         # ... grant role_name_1 to the session user to able assign it ownership
-        conn.execute(sa.text(f'GRANT {role_name_1} TO SESSION_USER'))
+        conn.execute(sa.text(f'GRANT {role_name_1} TO CURRENT_USER'))
         # ... and give it CREATE privileges to be able to own anything in the schema
         conn.execute(sa.text(f'GRANT CREATE ON SCHEMA {schema_name} TO {role_name_1}'))
         conn.execute(sa.text(f'GRANT SELECT ON TABLE {schema_name}.{table_name} TO {role_name_2}'))
         conn.execute(sa.text(f'ALTER TABLE {schema_name}.{table_name} OWNER TO {role_name_1}'))
 
         # .. and then tidy up the temporary perms
-        conn.execute(sa.text(f'REVOKE {role_name_1} FROM SESSION_USER'))
+        conn.execute(sa.text(f'REVOKE {role_name_1} FROM CURRENT_USER'))
         conn.execute(sa.text(f'REVOKE CREATE ON SCHEMA {schema_name} FROM {role_name_1}'))
 
         conn.commit()
