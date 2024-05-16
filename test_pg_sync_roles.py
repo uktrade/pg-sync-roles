@@ -817,6 +817,47 @@ def test_direct_table_permission_can_be_revoked(test_engine, test_table):
             assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
 
 
+def test_direct_table_permission_can_be_revoked_when_not_owner(test_engine, test_table):
+    schema_name, table_name = test_table
+    role_name_1 = get_test_role()
+    role_name_2 = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+
+    role_2_engine = sa.create_engine(f'{engine_type}://{role_name_2}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name_1, grants=())
+        sync_roles(conn, role_name_2, grants=())
+
+    with test_engine.connect() as conn:
+        # For the test setup, we want the test table to be owned by role_name_1, but SELECT granted
+        # to test_name_2. But in order to to that we have
+
+        # ... grant role_name_1 to the session user to able assign it ownership
+        conn.execute(sa.text(f'GRANT {role_name_1} TO SESSION_USER'))
+        # ... and give it CREATE privileges to be able to own anything in the schema
+        conn.execute(sa.text(f'GRANT CREATE ON SCHEMA {schema_name} TO {role_name_1}'))
+        conn.execute(sa.text(f'GRANT SELECT ON TABLE {schema_name}.{table_name} TO {role_name_2}'))
+        conn.execute(sa.text(f'ALTER TABLE {schema_name}.{table_name} OWNER TO {role_name_1}'))
+
+        # .. and then tidy up the temporary perms
+        conn.execute(sa.text(f'REVOKE {role_name_1} FROM SESSION_USER'))
+        conn.execute(sa.text(f'REVOKE CREATE ON SCHEMA {schema_name} FROM {role_name_1}'))
+
+        conn.commit()
+
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name_2, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaUsage(schema_name),
+        ))
+
+    with role_2_engine.connect() as conn:
+        with pytest.raises(sa.exc.ProgrammingError, match='permission denied for (table|relation)'):
+            assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
+
+
 def test_direct_view_permission_is_revoked(test_engine, test_view):
     schema_name, view_name = test_view
     role_name = get_test_role()

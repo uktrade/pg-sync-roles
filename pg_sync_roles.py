@@ -290,12 +290,37 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         # one of the known ones, as a paranoia check against SQL-injection
         if perm['privilege_type'] not in _KNOWN_PRIVILEGES:
             raise RuntimeError('Unknown privilege')
+
+        session_user = execute_sql(sql.SQL('SELECT SESSION_USER')).fetchall()[0][0]
+        table_owner = execute_sql(sql.SQL(
+            '''
+            SELECT rolname FROM pg_class c
+            INNER JOIN pg_namespace n ON n.oid = c.relnamespace
+            INNER JOIN pg_roles r ON r.oid = c.relowner
+            WHERE nspname = {schema_name}
+            AND relname = {table_name}
+            '''
+        ).format(
+            schema_name=sql.Literal(perm['name_1']),
+            table_name=sql.Literal(perm['name_2']),
+        )).fetchall()[0][0]
+
+        if session_user != table_owner:
+            execute_sql(sql.SQL('GRANT {table_owner} TO SESSION_USER').format(
+                table_owner=sql.Identifier(table_owner)
+            ))
+
         execute_sql(sql.SQL('REVOKE {privilege_type} ON TABLE {schema_name}.{table_name} FROM {role_name}').format(
             privilege_type=sql.SQL(perm['privilege_type']),  # This is only OK because we know privilege_type is one of the known ones
             schema_name=sql.Identifier(perm['name_1']),
             table_name=sql.Identifier(perm['name_2']),
             role_name=sql.Identifier(role_name),
         ))
+
+        if session_user != table_owner:
+            execute_sql(sql.SQL('REVOKE {table_owner} FROM SESSION_USER').format(
+                table_owner=sql.Identifier(table_owner)
+            ))
 
     def keys_with_none_value(d):
         return tuple(key for key, value in d.items() if value is None)
