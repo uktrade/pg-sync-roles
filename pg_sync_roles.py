@@ -300,7 +300,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         execute_sql(sql.SQL('ALTER {object_type} {object_name} OWNER TO {role_name}').format(
             object_type=object_type,
             role_name=sql.Identifier(role_name),
-            object_name=sql.Identifier(object_name),
+            object_name=sql.Identifier(*object_name),
         ))
         execute_sql(sql.SQL('REVOKE {role_name} FROM CURRENT_USER').format(
             role_name=sql.Identifier(role_name),
@@ -313,7 +313,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         ))
         execute_sql(sql.SQL('ALTER {object_type} {object_name} OWNER TO CURRENT_USER').format(
             object_type=object_type,
-            object_name=sql.Identifier(object_name),
+            object_name=sql.Identifier(*object_name),
         ))
         execute_sql(sql.SQL('REVOKE {role_name} FROM CURRENT_USER').format(
             role_name=sql.Identifier(role_name),
@@ -548,11 +548,11 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         schema_ownerships_to_revoke = tuple(schema_ownership for schema_ownership in schema_ownerships_that_exist if schema_ownership.schema_name not in schema_ownerships_that_exist)
         schema_ownerships_to_grant = tuple(schema_ownership for schema_ownership in schema_ownerships if schema_ownership.schema_name not in schema_ownerships_that_exist)
         for schema_ownership in schema_ownerships_to_revoke:
-            revoke_ownership(sql_object_types[SchemaUsage], role_name, schema_ownership.schema_name)
+            revoke_ownership(sql_object_types[SchemaUsage], role_name, (schema_ownership.schema_name,))
         for schema_ownership in schema_ownerships_to_grant:
             if (schema_ownership.schema_name,) not in schemas_that_exist:
                 create_schema(schema_ownership.schema_name)
-            grant_ownership(sql_object_types[SchemaUsage], role_name, schema_ownership.schema_name)
+            grant_ownership(sql_object_types[SchemaUsage], role_name, (schema_ownership.schema_name,))
 
         # Create database connect roles if we need to
         database_connect_roles = get_acl_roles(
