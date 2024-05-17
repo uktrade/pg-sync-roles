@@ -4,6 +4,17 @@ import time
 import uuid
 from datetime import datetime, timezone, timedelta
 
+from pg_sync_roles import (
+    sync_roles,
+    Login,
+    DatabaseConnect,
+    RoleMembership,
+    TableSelect,
+    SchemaUsage,
+    SchemaOwnership,
+    SchemaCreate
+)
+
 import pytest
 import sqlalchemy as sa
 import wrapt
@@ -18,9 +29,6 @@ except ImportError:
     engine_type = 'postgresql+psycopg'
 
 engine_future = {'future': True} if tuple(int(v) for v in sa.__version__.split('.')) < (2, 0, 0) else {}
-
-from pg_sync_roles import sync_roles, DatabaseConnect, SchemaUsage, TableSelect, Login, RoleMembership, SchemaOwnership
-
 
 # By 4000 roles having permission to something, we get "row is too big" errors, so it's a good
 # number to test on to make sure we don't hit that issue
@@ -39,7 +47,7 @@ def get_test_role():
 
 
 def is_member(conn, child_role_name, parent_role_name):
-    query = f'''
+    query = '''
         SELECT EXISTS (
             SELECT 1 FROM pg_auth_members
             WHERE member = :child_role_name ::regrole
@@ -111,7 +119,7 @@ def test_table(root_engine, test_engine):
     with test_engine.begin() as conn:
         conn.execute(sa.text(f'CREATE SCHEMA {schema_name}'))
         conn.execute(sa.text(f'CREATE TABLE {schema_name}.{table_name} (id int)'))
-    
+
     yield schema_name, table_name
 
     with root_engine.begin() as conn:
@@ -753,7 +761,6 @@ def test_table_select_granted_can_query_even_if_another_table_in_schema_not_exis
 def test_schema_usage_repeated_does_not_increase_role_count(test_engine, test_table):
     schema_name, table_name = test_table
     role_name = get_test_role()
-    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
             SchemaUsage(schema_name),
@@ -774,7 +781,6 @@ def test_schema_usage_repeated_does_not_increase_role_count(test_engine, test_ta
 def test_table_select_repeated_does_not_increase_role_count(test_engine, test_table):
     schema_name, table_name = test_table
     role_name = get_test_role()
-    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
             TableSelect(schema_name, table_name),
@@ -822,7 +828,7 @@ def test_schema_ownership_and_usage(test_engine, test_table):
     schema_name, table_name = test_table
     role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
-  
+
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
             Login(valid_until=valid_until, password='password'),
@@ -1000,3 +1006,53 @@ def test_direct_sequence_permission_is_revoked(test_engine, test_sequence):
     with engine.connect() as conn:
         with pytest.raises(sa.exc.ProgrammingError, match='permission denied for sequence'):
             assert conn.execute(sa.text(f"SELECT nextval('{schema_name}.{sequence_name}');")).fetchall()[0][0] == 0
+
+
+def test_schema_create_roles_can_create_table(test_engine, test_sequence):
+    schema_name, _ = test_sequence
+    table_name = 'test_table_' + uuid.uuid4().hex
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaCreate(schema_name),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with engine.begin() as conn:
+        conn.execute(sa.text(f'CREATE TABLE {schema_name}.{table_name} (id int)'))
+
+def test_schema_create_roles_can_create_view(test_engine, test_table):
+    schema_name, table_name = test_table
+    view_name = 'test_view_' + uuid.uuid4().hex
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaUsage(schema_name),
+            SchemaCreate(schema_name),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with engine.begin() as conn:
+        conn.execute(sa.text(f'CREATE VIEW {schema_name}.{view_name} AS SELECT * FROM {schema_name}.{table_name}'))
+
+def test_schema_create_roles_can_create_sequence(test_engine, test_view):
+    schema_name, _ = test_view
+    sequence_name = 'test_sequence_' + uuid.uuid4().hex
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaCreate(schema_name),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with engine.begin() as conn:
+        conn.execute(sa.text(f'CREATE SEQUENCE {schema_name}.{sequence_name} START 101;'))
