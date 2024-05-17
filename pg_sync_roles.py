@@ -2,9 +2,14 @@ from enum import Enum
 from contextlib import contextmanager
 from dataclasses import dataclass, is_dataclass
 from datetime import datetime
+from itertools import groupby
+from typing import ClassVar, Union
 from uuid import uuid4
+
 import logging
 logger = logging.getLogger()
+
+
 import sqlalchemy as sa
 try:
     from psycopg2 import sql as sql2
@@ -17,7 +22,7 @@ except ImportError:
     sql3 = None
 
 
-class Privilege(Enum):
+class ACLPrivilege(Enum):
     SELECT = 1
     INSERT = 2
     UPDATE = 3
@@ -34,51 +39,140 @@ class Privilege(Enum):
     ALTER_SYSTEM = 14
 
 
-SELECT = Privilege.SELECT
-INSERT = Privilege.INSERT
-UPDATE = Privilege.UPDATE
-DELETE = Privilege.DELETE
-TRUNCATE = Privilege.TRUNCATE
-REFERENCES = Privilege.REFERENCES
-TRIGGER = Privilege.TRIGGER
-CREATE = Privilege.CREATE
-CONNECT = Privilege.CONNECT
-TEMPORARY = Privilege.TEMPORARY
-EXECUTE = Privilege.EXECUTE
-USAGE = Privilege.USAGE
-SET = Privilege.SET
-ALTER_SYSTEM = Privilege.ALTER_SYSTEM
+class OwnerPrivilege(Enum):
+    OWNER = 1
+
+
+SELECT = ACLPrivilege.SELECT
+INSERT = ACLPrivilege.INSERT
+UPDATE = ACLPrivilege.UPDATE
+DELETE = ACLPrivilege.DELETE
+TRUNCATE = ACLPrivilege.TRUNCATE
+REFERENCES = ACLPrivilege.REFERENCES
+TRIGGER = ACLPrivilege.TRIGGER
+CREATE = ACLPrivilege.CREATE
+CONNECT = ACLPrivilege.CONNECT
+TEMPORARY = ACLPrivilege.TEMPORARY
+EXECUTE = ACLPrivilege.EXECUTE
+USAGE = ACLPrivilege.USAGE
+SET = ACLPrivilege.SET
+ALTER_SYSTEM = ACLPrivilege.ALTER_SYSTEM
+OWNER = OwnerPrivilege.OWNER
+
+
+# Base class for all grants
+class _BaseGrant():
+    pass
+
+
+# Mixin to identify grants in the global database
+class _GlobalGrantMixin():
+    pass
+
+
+# Mixin to identify grants in the local database
+class _LocalGrantMixin():
+    pass
+
+
+class _CatalogTableGrant(_BaseGrant):
+    catalog_table: ClassVar[str]
+    name_column: ClassVar[str]
+    acl_column: ClassVar[str]
+    acl_role_sql_pattern = ClassVar[str]
+    acl_role_python_base = ClassVar[str]
+
+    privilege: Union[ACLPrivilege, OwnerPrivilege]
+
+
+class _InSchemaGrant(_CatalogTableGrant):
+    catalog_table: ClassVar[str]
+    name_column: ClassVar[str]
+    acl_column: ClassVar[str]
+    acl_role_sql_pattern = ClassVar[str]
+    acl_role_python_base = ClassVar[str]
+    namespace_column: ClassVar[str]
+
+    privilege: Union[ACLPrivilege, OwnerPrivilege]
+    schema_name: str
 
 
 @dataclass(frozen=True)
-class DatabaseConnect:
+class DatabaseGrant(_CatalogTableGrant, _GlobalGrantMixin):
+    catalog_table: ClassVar[str] = 'pg_database'
+    name_column: ClassVar[str] = 'datname'
+    acl_column: ClassVar[str] = 'datacl'
+    acl_role_sql_pattern: ClassVar[str] = '\\_pgsr\\_global\\_database\\_connect\\_%'
+    acl_role_python_base: ClassVar[str] = '_pgsr_global_database_connect_'
+
+    privilege: Union[ACLPrivilege, OwnerPrivilege]
     database_name: str
 
+    def fqn(self):
+        return (self.database_name,)
+
 
 @dataclass(frozen=True)
-class SchemaUsage:
+class SchemaGrant(_CatalogTableGrant, _LocalGrantMixin):
+    catalog_table: ClassVar[str] = 'pg_namespace'
+    name_column: ClassVar[str] = 'nspname'
+    acl_column: ClassVar[str] = 'nspacl'
+    acl_role_sql_pattern: ClassVar[str] = '\\_pgsr\\_local\\_{db_oid}_\\schema\\_usage\\_%'
+    acl_role_python_base: ClassVar[str] = '_pgsr_local_{db_oid}_schema_usage_'
+
+    privilege: Union[ACLPrivilege, OwnerPrivilege]
     schema_name: str
 
-
-@dataclass(frozen=True)
-class SchemaOwnership:
-    schema_name: str
+    def fqn(self):
+        return (self.schema_name,)
 
 
 @dataclass(frozen=True)
-class TableSelect:
+class TableGrant(_InSchemaGrant, _LocalGrantMixin):
+    catalog_table: ClassVar[str] = 'pg_class'
+    name_column: ClassVar[str] = 'relname'
+    acl_column: ClassVar[str] = 'relacl'
+    acl_role_sql_pattern: ClassVar[str] = '_pgsr_local_{db_oid}_table_select_%',
+    acl_role_python_base: ClassVar[str] = '_pgsr_local_{db_oid}_table_select_',
+    namespace_column: ClassVar[str] = 'relnamespace'
+
+    privilege: Union[ACLPrivilege, OwnerPrivilege]
     schema_name: str
     table_name: str
 
+    def fqn(self):
+        return (self.schema_name, self.table_name)
+
+
+class DatabaseConnect(DatabaseGrant):
+    def __init__(self, database_name: str):
+        super().__init__(CONNECT, database_name)
+
+
+class SchemaUsage(SchemaGrant):
+    schema_name: str
+    def __init__(self, schema_name: str):
+        super().__init__(USAGE, schema_name)
+
+
+class SchemaOwnership(SchemaGrant):
+    def __init__(self, schema_name: str):
+        super().__init__(OWNER, schema_name)
+
+
+class TableSelect(TableGrant):
+    def __init__(self, schema_name: str, table_name: str):
+        super().__init__(SELECT, schema_name, table_name)
+
 
 @dataclass(frozen=True)
-class Login:
+class Login(_BaseGrant, _GlobalGrantMixin):
     valid_until: datetime = None
     password: str = None
 
 
 @dataclass(frozen=True)
-class RoleMembership:
+class RoleMembership(_BaseGrant, _GlobalGrantMixin):
     role_name: str
 
 
@@ -114,13 +208,14 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         )).fetchall()[0][0]
 
     def get_existing(table_name, column_name, values_to_search_for):
+        print('searching for', values_to_search_for)
         if not values_to_search_for:
             return []
         return execute_sql(sql.SQL('SELECT {column_name} FROM {table_name} WHERE {column_name} IN ({values_to_search_for})').format(
             table_name=sql.Identifier(table_name),
             column_name=sql.Identifier(column_name),
             values_to_search_for=sql.SQL(',').join(
-                sql.Literal(value) for value in values_to_search_for
+                sql.Literal(*value) for value in values_to_search_for
             )
         )).fetchall()
 
@@ -249,7 +344,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         execute_sql(sql.SQL('ALTER {object_type} {object_name} OWNER TO {role_name}').format(
             object_type=object_type,
             role_name=sql.Identifier(role_name),
-            object_name=sql.Identifier(object_name),
+            object_name=sql.Identifier(*object_name),
         ))
         execute_sql(sql.SQL('REVOKE {role_name} FROM CURRENT_USER').format(
             role_name=sql.Identifier(role_name),
@@ -262,7 +357,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         ))
         execute_sql(sql.SQL('ALTER {object_type} {object_name} OWNER TO CURRENT_USER').format(
             object_type=object_type,
-            object_name=sql.Identifier(object_name),
+            object_name=sql.Identifier(*object_name),
         ))
         execute_sql(sql.SQL('REVOKE {role_name} FROM CURRENT_USER').format(
             role_name=sql.Identifier(role_name),
@@ -339,6 +434,9 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
                 table_owner=sql.Identifier(table_owner)
             ))
 
+    def fqns(grants):
+        return tuple(grant.fqn() for grant in grants)
+
     def keys_with_none_value(d):
         return tuple(key for key, value in d.items() if value is None)
 
@@ -366,28 +464,53 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         ALTER_SYSTEM : sql.SQL('ALTER SYSTEM'),
     }
 
+    literal_privs = {
+        SELECT: 'SELECT',
+        INSERT: 'INSERT',
+        UPDATE: 'UPDATE',
+        DELETE: 'DELETE',
+        TRUNCATE: 'TRUNCATE',
+        REFERENCES: 'REFERENCES',
+        TRIGGER: 'TRIGGER',
+        CREATE: 'CREATE',
+        CONNECT: 'CONNECT',
+        TEMPORARY: 'TEMPORARY',
+        EXECUTE: 'EXECUTE',
+        USAGE: 'USAGE',
+        SET: 'SET',
+        ALTER_SYSTEM : 'ALTER SYSTEM',
+    }
+
     sql_object_types = {
         TableSelect: sql.SQL('TABLE'),
         DatabaseConnect: sql.SQL('DATABASE'),
         SchemaUsage: sql.SQL('SCHEMA'),
     }
 
+    base_catalogue_grants = (
+        DatabaseGrant,
+        SchemaGrant,
+        TableGrant,
+    )
+
     # Split grants by their type
-    database_connects = tuple(grant for grant in grants if isinstance(grant, DatabaseConnect))
-    schema_usages = tuple(grant for grant in grants if isinstance(grant, SchemaUsage))
-    schema_ownerships = tuple(grant for grant in grants if isinstance(grant, SchemaOwnership))
-    table_selects = tuple(grant for grant in grants if isinstance(grant, TableSelect))
+    # acl_grants = tuple(grant for grant in catalog_grants if grant.privilege is OWNER)
+    # ownership_grants = tuple(grant for grant in catalog_grants if grant.privilege is ACLPrivilege)
+    catalog_grants = tuple(grant for grant in grants if isinstance(grant, _CatalogTableGrant))
     logins = tuple(grant for grant in grants if isinstance(grant, Login))
     role_memberships = tuple(grant for grant in grants if isinstance(grant, RoleMembership))
 
-    # Gather names of related grants (used for example to check if things exist)
-    all_database_connect_names = tuple(grant.database_name for grant in database_connects)
-    all_database_names = all_database_connect_names
-    all_schema_usage_names = tuple(grant.schema_name for grant in schema_usages)
-    all_schema_ownership_names = tuple(grant.schema_name for grant in schema_ownerships)
-    all_schema_names = all_schema_usage_names + all_schema_ownership_names
-    all_table_select_names = tuple((grant.schema_name, grant.table_name) for grant in table_selects)
-    all_table_names = all_table_select_names
+    # Group catalogue grants by their type (so it's easier, for example, to find all existing ones
+    # (To sort them we have to str them, which is a bit odd, but it works)
+    def get_base_str(grant):
+        return next(str(base) for base in base_catalogue_grants if isinstance(grant, base))
+    def get_base_type(base_str):
+        return next(base for base in base_catalogue_grants if str(base) == base_str[0])
+    sorted_catalog_grants = sorted(catalog_grants, key=lambda grant: (get_base_str(grant), grant.privilege))
+    grouped_catalog_grants = {
+        get_base_type(base_str): tuple(grants)
+        for base_str, grants in groupby(sorted_catalog_grants, key=lambda grant: (get_base_str(grant), grant.privilege))
+    }
 
     # Validation
     if len(logins) > 1:
@@ -397,15 +520,28 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         # Get database OID that are in database-specific role names
         db_oid = get_database_oid()
 
-        # Find existing objects where needed
-        databases_that_exist = set(get_existing('pg_database', 'datname', all_database_names))
-        schemas_that_exist = set(get_existing('pg_namespace', 'nspname', all_schema_names))
-        tables_that_exist = set(get_existing_in_schema('pg_class', 'relnamespace', 'relname', all_table_names))
+        # Dict of BaseType: set of fqn's that exist
+        print(grouped_catalog_grants)
+        existing = {
+            base: set(
+                get_existing_in_schema(base.catalog_table, base.namespace_column, base.name_column, fqns(grants)) if issubclass(base, _InSchemaGrant) else \
+                get_existing(base.catalog_table, base.name_column, fqns(grants))
+            )
+            for base, grants in grouped_catalog_grants.items()
+        }
+        # ACL grants - only for those corresponding to objects that exist
+        acl_grants = {
+            base: tuple(grant for grant in grants if grant.fqn() in existing[base] and isinstance(grant.privilege, ACLPrivilege))
+            for base, grants in grouped_catalog_grants.items()
+        }
+        print('acl1 existing', existing)
+        print('acl', acl_grants)
 
-        # Filter out databases and tables that don't exist
-        database_connects = tuple(database_connect for database_connect in database_connects if (database_connect.database_name,) in databases_that_exist)
-        schema_usages = tuple(schema_usage for schema_usage in schema_usages if (schema_usage.schema_name,) in schemas_that_exist)
-        table_selects = tuple(table_select for table_select in table_selects if (table_select.schema_name, table_select.table_name) in tables_that_exist)
+        # Ownership grants - only for those corresponding to objects that exist, except also for non-existing schemas
+        ownership_grants = {
+            base: tuple(grant for grant in grants if (grant.fqn() in existing[base] or isinstance(grant, SchemaGrant)) and grant.privilege is OwnerPrivilege)
+            for base, grants in grouped_catalog_grants.items()
+        }
 
         # Find if we need to make the role
         role_to_create = not get_role_exists(role_name)
@@ -416,19 +552,44 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         # Real ACL permissions - we revoke them all
         acl_table_permissions_to_revoke = get_acl_rows(existing_permissions, _TABLE_LIKE)
 
+        def format_pattern(grant, pattern):
+            return \
+                pattern.format(db_oid=db_oid) if isinstance(grant, _LocalGrantMixin) else \
+                pattern
+
         # And the ACL-equivalent roles
-        database_connect_roles = get_acl_roles(
-            'CONNECT', 'pg_database', 'datname', 'datacl', '\\_pgsr\\_global\\_database\\_connect\\_%',
-            all_database_connect_names)
-        database_connect_roles_to_create = keys_with_none_value(database_connect_roles)
-        schema_usage_roles = get_acl_roles(
-            'USAGE', 'pg_namespace', 'nspname', 'nspacl', f'\\_pgsr\\_local\\_{db_oid}_\\schema\\_usage\\_%',
-            all_schema_usage_names)
-        schema_usage_roles_to_create = keys_with_none_value(schema_usage_roles)
-        table_select_roles = get_acl_roles_in_schema(
-            'SELECT', 'pg_class', 'relname', 'relacl', 'relnamespace', f'\\_pgsr\\_local\\_{db_oid}_\\table\\_select\\_%',
-            all_table_select_names)
-        table_select_roles_to_create = keys_with_none_value(table_select_roles)
+        acl_grants_by_priv = {
+            base: {
+                priv: list(grants_for_priv)
+                for priv, grants_for_priv in groupby(grants, key=lambda grant: (get_base_str(grant), grant.privilege))
+            }
+            for base, grants in acl_grants.items()
+
+        }
+        acl_roles_by_priv = {
+            base: {
+                priv: \
+                    get_acl_roles_in_schema(literal_privs[grant.privilege], base.catalog_table, base.name_column, base.acl_column, base.namespace_column, format_pattern(base.acl_role_sql_pattern),fqns(grants)) if isinstance(base, _InSchemaGrant) else 
+                    get_acl_roles(literal_privs[grant.privilege], base.catalog_table, base.name_column, base.acl_column, format_pattern(base.acl_role_sql_pattern), fqns(grants))
+                for priv, grants in grants_by_priv.items()
+            }
+            for base, grants_by_priv in acl_grants_by_priv.items()
+        }
+        print('by 1', acl_grants_by_priv)
+        print('by byriv', acl_roles_by_priv)
+        # acl_roles_by_priv = {
+        #     base: \
+        #         get_acl_roles_in_schema(literal_privs[grant.privilege], base.catalog_table, base.name_column, base.acl_column, base.namespace_column, format_pattern(base.acl_role_sql_pattern), grant.fqn()) if isinstance(base, _InSchemaGrant) else 
+        #         get_acl_roles(literal_privs[grant.privilege], base.catalog_table, base.name_column, base.acl_column, format_pattern(base.acl_role_sql_pattern), grant.fqn())
+        #     for base, grants in acl_grants.items()
+        # }
+        # import pprint
+        # print('here')
+        # pprint.pprint(acl_roles_by_priv)
+        # alc_roles_to_create = sum(
+        #     tuple(keys_with_none_value(roles))
+        #     for base, roles in acl_roles.items()
+        # )
 
         # Ownerships to grant and revoke
         schema_ownerships_that_exist = tuple(SchemaOwnership(perm['name_1']) for perm in existing_permissions if perm['on'] == 'schema')
@@ -497,11 +658,11 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         schema_ownerships_to_revoke = tuple(schema_ownership for schema_ownership in schema_ownerships_that_exist if schema_ownership.schema_name not in schema_ownerships_that_exist)
         schema_ownerships_to_grant = tuple(schema_ownership for schema_ownership in schema_ownerships if schema_ownership.schema_name not in schema_ownerships_that_exist)
         for schema_ownership in schema_ownerships_to_revoke:
-            revoke_ownership(sql_object_types[SchemaUsage], role_name, schema_ownership.schema_name)
+            revoke_ownership(sql_object_types[SchemaUsage], role_name, (schema_ownership.schema_name,))
         for schema_ownership in schema_ownerships_to_grant:
             if (schema_ownership.schema_name,) not in schemas_that_exist:
                 create_schema(schema_ownership.schema_name)
-            grant_ownership(sql_object_types[SchemaUsage], role_name, schema_ownership.schema_name)
+            grant_ownership(sql_object_types[SchemaUsage], role_name, (schema_ownership.schema_name,))
 
         # Create database connect roles if we need to
         database_connect_roles = get_acl_roles(
