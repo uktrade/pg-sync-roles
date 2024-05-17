@@ -384,11 +384,8 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
     # Gather names of related grants (used for example to check if things exist)
     all_database_connect_names = tuple(grant.database_name for grant in database_connects)
     all_database_names = all_database_connect_names
-    all_schema_usage_names = tuple(grant.schema_name for grant in schema_usages)
-    all_schema_ownership_names = tuple(grant.schema_name for grant in schema_ownerships)
-    all_schema_names = all_schema_usage_names + all_schema_ownership_names
-    all_table_select_names = tuple((grant.schema_name, grant.table_name) for grant in table_selects)
-    all_table_names = all_table_select_names
+    all_schema_names = tuple(grant.schema_name for grant in schema_ownerships) + tuple(grant.schema_name for grant in schema_usages)
+    all_table_names = tuple((grant.schema_name, grant.table_name) for grant in table_selects)
 
     # Validation
     if len(logins) > 1:
@@ -403,10 +400,13 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         schemas_that_exist = set(get_existing('pg_namespace', 'nspname', all_schema_names))
         tables_that_exist = set(get_existing_in_schema('pg_class', 'relnamespace', 'relname', all_table_names))
 
-        # Filter out databases and tables that don't exist
+        # Filter out ACLs grants for databases, schemas and tables that don't exist
         database_connects = tuple(database_connect for database_connect in database_connects if (database_connect.database_name,) in databases_that_exist)
         schema_usages = tuple(schema_usage for schema_usage in schema_usages if (schema_usage.schema_name,) in schemas_that_exist)
         table_selects = tuple(table_select for table_select in table_selects if (table_select.schema_name, table_select.table_name) in tables_that_exist)
+        all_database_connect_names = tuple(grant.database_name for grant in database_connects)
+        all_schema_usage_names = tuple(grant.schema_name for grant in schema_usages)
+        all_table_select_names = tuple((grant.schema_name, grant.table_name) for grant in table_selects)
 
         # Find if we need to make the role
         role_to_create = not get_role_exists(role_name)
