@@ -89,7 +89,7 @@ class RoleMembership:
     role_name: str
 
 
-def sync_roles(conn, role_name, grants=(), lock_key=1):
+def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(), lock_key=1):
     def execute_sql(sql_obj):
         # This avoids "argument 1 must be psycopg2.extensions.connection, not PGConnectionProxy"
         # which can happen when elastic-apm wraps the connection object when using psycopg2
@@ -230,10 +230,12 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             for schema_name, row_name, role_name in row_name_role_names
         }
 
-    def get_existing_permissions(role_name):
-        return tuple(row._mapping for row in execute_sql(sql.SQL(_EXISTING_PERMISSIONS_SQL).format(
+    def get_existing_permissions(role_name, preserve_existing_grants_in_schemas):
+        preserve_existing_grants_in_schemas_set = set(preserve_existing_grants_in_schemas)
+        results = tuple(row._mapping for row in execute_sql(sql.SQL(_EXISTING_PERMISSIONS_SQL).format(
             role_name=sql.Literal(role_name)
         )).fetchall())
+        return tuple(row for row in results if row['on'] not in _IN_SCHEMA or row['name_1'] not in preserve_existing_grants_in_schemas_set)
 
     def get_available_acl_role(base):
         for _ in range(0, 10):
@@ -427,7 +429,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         role_to_create = not get_role_exists(role_name)
 
         # Get all existing permissions
-        existing_permissions = get_existing_permissions(role_name) if not role_to_create else []
+        existing_permissions = get_existing_permissions(role_name, preserve_existing_grants_in_schemas) if not role_to_create else []
 
         # Real ACL permissions - we revoke them all
         acl_table_permissions_to_revoke = get_acl_rows(existing_permissions, _TABLE_LIKE)
@@ -518,7 +520,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
             tables_that_exist = set(get_existing_in_schema('pg_class', 'relnamespace', 'relname', all_table_names))
 
             # Get all existing permissions
-            existing_permissions = get_existing_permissions(role_name)
+            existing_permissions = get_existing_permissions(role_name, preserve_existing_grants_in_schemas)
 
             # Grant or revoke schema ownerships
             schema_ownerships_that_exist = tuple(perm['name_1'] for perm in existing_permissions if perm['on'] == 'schema')
@@ -642,6 +644,30 @@ _TABLE_LIKE = {
     'foreign table',
     'partitioned table',
     'sequence',
+}
+
+
+_IN_SCHEMA = {
+    # Table-like things
+    'table',
+    'view',
+    'materialized view',
+    'foreign table',
+    'partitioned table',
+    'sequence',
+    # Type-like things
+    'base type',
+    'composite type',
+    'enum type',
+    'pseudo type',
+    'range type',
+    'multirange type',
+    'domain'
+    # Function-like things
+    'function',
+    'procedure',
+    'aggregate function',
+    'window function',
 }
 
 
