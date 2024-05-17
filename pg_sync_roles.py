@@ -676,7 +676,7 @@ UNION ALL
   FROM pg_class c
   INNER JOIN pg_namespace n ON n.oid = c.relnamespace
   INNER JOIN owned_or_acl a ON a.objid = c.oid
-  CROSS JOIN aclexplode(c.relacl)
+  CROSS JOIN aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner)))
   INNER JOIN relkind_mapping r ON r.relkind = c.relkind
   WHERE classid = 'pg_class'::regclass AND grantee = refobjid AND objsubid = 0
 )
