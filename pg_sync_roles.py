@@ -383,6 +383,7 @@ def sync_roles(conn, role_name, grants=(), lock_key=1):
         TableSelect: sql.SQL('TABLE'),
         DatabaseConnect: sql.SQL('DATABASE'),
         SchemaUsage: sql.SQL('SCHEMA'),
+        SchemaCreate: sql.SQL('SCHEMA'),
     }
 
     # Split grants by their type
