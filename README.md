@@ -131,6 +131,8 @@ with engine.connect() as conn:
 
 #### `SchemaUsage(schema_name)`
 
+#### `SchemaCreate(schema_name)`
+
 #### `TableSelect(schema_name, table_name)`
 
 #### `RoleMembership(role_name)`

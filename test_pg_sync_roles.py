@@ -39,7 +39,7 @@ def get_test_role():
 
 
 def is_member(conn, child_role_name, parent_role_name):
-    query = f'''
+    query = '''
         SELECT EXISTS (
             SELECT 1 FROM pg_auth_members
             WHERE member = :child_role_name ::regrole
@@ -753,7 +753,6 @@ def test_table_select_granted_can_query_even_if_another_table_in_schema_not_exis
 def test_schema_usage_repeated_does_not_increase_role_count(test_engine, test_table):
     schema_name, table_name = test_table
     role_name = get_test_role()
-    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
             SchemaUsage(schema_name),
@@ -774,7 +773,6 @@ def test_schema_usage_repeated_does_not_increase_role_count(test_engine, test_ta
 def test_table_select_repeated_does_not_increase_role_count(test_engine, test_table):
     schema_name, table_name = test_table
     role_name = get_test_role()
-    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
             TableSelect(schema_name, table_name),
@@ -822,7 +820,7 @@ def test_schema_ownership_and_usage(test_engine, test_table):
     schema_name, table_name = test_table
     role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
-  
+
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
             Login(valid_until=valid_until, password='password'),
