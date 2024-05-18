@@ -389,10 +389,10 @@ def test_login_without_database_connect_cannot_connect(test_engine):
         engine.connect()
 
 
-def test_login_with_different_database_connect_cannot_connect(test_engine):
+def test_login_with_different_database_connect_cannot_connect(root_engine, test_engine):
     role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
-    with test_engine.connect() as conn:
+    with root_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
             Login(valid_until=valid_until, password='password'),
             DatabaseConnect(ROOT_DATABASE_NAME),
@@ -719,6 +719,36 @@ def test_table_select_granted_can_query(test_engine, test_table):
         ))
 
     engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with engine.connect() as conn:
+        assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
+
+
+def test_table_select_and_usage_if_owned_by_other_user(test_engine, test_table):
+    schema_name, table_name = test_table
+    role_name_1 = get_test_role()
+    role_name_2 = get_test_role()
+
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name_1, grants=(
+            SchemaOwnership(schema_name),
+        ))
+
+    with test_engine.connect() as conn:
+        assert conn.execute(sa.text(f"SELECT nspowner::regrole FROM pg_namespace WHERE nspname='{schema_name}'")).fetchall()[0][0] == role_name_1
+
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name_2, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaUsage(schema_name),
+            TableSelect(schema_name, table_name),
+        ))
+
+    with test_engine.connect() as conn:
+        assert conn.execute(sa.text(f"SELECT nspowner::regrole FROM pg_namespace WHERE nspname='{schema_name}'")).fetchall()[0][0] == role_name_1
+
+    engine = sa.create_engine(f'{engine_type}://{role_name_2}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
     with engine.connect() as conn:
         assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
 
