@@ -580,6 +580,11 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
                 grant(sql_grants[SELECT], sql_object_types[TableSelect], (schema_name, table_name), table_select_role)
                 table_select_roles[(schema_name, table_name)] = table_select_role
 
+            # Revoke permissions on tables
+            acl_table_permissions_to_revoke = get_acl_rows(existing_permissions, _TABLE_LIKE)
+            for perm in acl_table_permissions_to_revoke:
+                revoke_table_perm(current_user, perm, role_name)
+
             # Grant login if we need to
             login_row = next((perm for perm in existing_permissions if perm['on'] == 'cluster' and perm['privilege_type'] == 'LOGIN'), None)
             can_login = login_row is not None
@@ -615,11 +620,6 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
                 - set(role for role in schema_create_roles.values()) \
                 - set(role for role in table_select_roles.values())
             revoke_memberships(memberships_to_revoke, role_name)
-
-            # Revoke permissions on tables
-            acl_table_permissions_to_revoke = get_acl_rows(existing_permissions, _TABLE_LIKE)
-            for perm in acl_table_permissions_to_revoke:
-                revoke_table_perm(current_user, perm, role_name)
 
 
 _KNOWN_PRIVILEGES = {
