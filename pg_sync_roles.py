@@ -456,9 +456,9 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         table_select_roles_to_create = keys_with_none_value(table_select_roles)
 
         # Ownerships to grant and revoke
-        schema_ownerships_that_exist = tuple(perm['name_1'] for perm in existing_permissions if perm['on'] == 'schema')
-        schema_ownerships_to_revoke = tuple(schema_ownership for schema_ownership in map(SchemaOwnership, schema_ownerships_that_exist) if schema_ownership.schema_name not in schema_ownerships)
-        schema_ownerships_to_grant = tuple(schema_ownership for schema_ownership in schema_ownerships if schema_ownership.schema_name not in schema_ownerships)
+        schema_ownerships_that_exist = tuple(SchemaOwnership(perm['name_1']) for perm in existing_permissions if perm['on'] == 'schema')
+        schema_ownerships_to_revoke = tuple(schema_ownership for schema_ownership in schema_ownerships_that_exist if schema_ownership not in schema_ownerships)
+        schema_ownerships_to_grant = tuple(schema_ownership for schema_ownership in schema_ownerships if schema_ownership not in schema_ownerships_that_exist)
 
         # And any memberships of the database connect roles or explicitly requested role memberships
         memberships = set(perm['name_1'] for perm in existing_permissions if perm['on'] == 'role' and perm['privilege_type'] == 'MEMBER')
@@ -523,9 +523,9 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
             existing_permissions = get_existing_permissions(role_name, preserve_existing_grants_in_schemas)
 
             # Grant or revoke schema ownerships
-            schema_ownerships_that_exist = tuple(perm['name_1'] for perm in existing_permissions if perm['on'] == 'schema')
-            schema_ownerships_to_revoke = tuple(schema_ownership for schema_ownership in map(SchemaOwnership, schema_ownerships_that_exist) if schema_ownership.schema_name not in schema_ownerships)
-            schema_ownerships_to_grant = tuple(schema_ownership for schema_ownership in schema_ownerships if schema_ownership.schema_name not in schema_ownerships)
+            schema_ownerships_that_exist = tuple(SchemaOwnership(perm['name_1']) for perm in existing_permissions if perm['on'] == 'schema')
+            schema_ownerships_to_revoke = tuple(schema_ownership for schema_ownership in schema_ownerships_that_exist if schema_ownership not in schema_ownerships)
+            schema_ownerships_to_grant = tuple(schema_ownership for schema_ownership in schema_ownerships if schema_ownership not in schema_ownerships_that_exist)
             for schema_ownership in schema_ownerships_to_revoke:
                 revoke_ownership(sql_object_types[SchemaUsage], role_name, schema_ownership.schema_name)
             for schema_ownership in schema_ownerships_to_grant:
