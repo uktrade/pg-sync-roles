@@ -520,10 +520,10 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         schemas_that_exist = set(get_existing('pg_namespace', 'nspname', all_schema_names))
         tables_that_exist = set(get_existing_in_schema('pg_class', 'relnamespace', 'relname', all_table_names))
 
-        with temporary_grant_of(role_name):
+        # Get all existing permissions
+        existing_permissions = get_existing_permissions(role_name, preserve_existing_grants_in_schemas)
 
-            # Get all existing permissions
-            existing_permissions = get_existing_permissions(role_name, preserve_existing_grants_in_schemas)
+        with temporary_grant_of(role_name):
 
             # Grant or revoke schema ownerships
             schema_ownerships_that_exist = tuple(SchemaOwnership(perm['name_1']) for perm in existing_permissions if perm['on'] == 'schema')
