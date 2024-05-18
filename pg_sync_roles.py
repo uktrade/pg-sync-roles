@@ -306,6 +306,15 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
             role_name=sql.Identifier(role_name),
         ))
 
+    def revoke(grant_type, object_type, object_name, role_name):
+        logger.info("Revoking %s on %s %s to role %s", grant_type, object_type, object_name, role_name)
+        execute_sql(sql.SQL('REVOKE {grant_type} ON {object_type} {object_name} FROM {role_name}').format(
+            grant_type=grant_type,
+            object_type=object_type,
+            object_name=sql.Identifier(*object_name),
+            role_name=sql.Identifier(role_name),
+        ))
+
     def grant_ownership(object_type, role_name, object_name):
         logger.info("Granting schema ownership on %s %s to role %s", object_type, object_name, role_name)
         execute_sql(sql.SQL('ALTER {object_type} {object_name} OWNER TO {role_name}').format(
@@ -352,20 +361,6 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         logger.info("Revoking memberships %s from role %s", memberships, role_name)
         execute_sql(sql.SQL('REVOKE {memberships} FROM {role_name}').format(
             memberships=sql.SQL(',').join(sql.Identifier(membership) for membership in memberships),
-            role_name=sql.Identifier(role_name),
-        ))
-
-    def revoke_table_perm(perm, role_name):
-        # We can't escape the privilege_type because it's a keyword, so we check it definitely is
-        # one of the known ones, as a paranoia check against SQL-injection
-        if perm['privilege_type'] not in _KNOWN_PRIVILEGES:
-            raise RuntimeError('Unknown privilege')
-
-        logger.info("Revoking %s on %s.%s from %s", perm['privilege_type'], perm['name_1'], perm['name_2'], role_name)
-        execute_sql(sql.SQL('REVOKE {privilege_type} ON TABLE {schema_name}.{table_name} FROM {role_name}').format(
-            privilege_type=sql.SQL(perm['privilege_type']),  # This is only OK because we know privilege_type is one of the known ones
-            schema_name=sql.Identifier(perm['name_1']),
-            table_name=sql.Identifier(perm['name_2']),
             role_name=sql.Identifier(role_name),
         ))
 
@@ -448,6 +443,7 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
 
         # Real ACL permissions - we revoke them all
         acl_table_permissions_to_revoke = get_acl_rows(existing_permissions, _TABLE_LIKE)
+        acl_schema_permissions_to_revoke = get_acl_rows(existing_permissions, _SCHEMA)
 
         # And the ACL-equivalent roles
         database_connect_roles = get_acl_roles(
@@ -471,7 +467,7 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         table_select_roles_to_create = keys_with_none_value(table_select_roles)
 
         # Ownerships to grant and revoke
-        schema_ownerships_that_exist = tuple(SchemaOwnership(perm['name_1']) for perm in existing_permissions if perm['on'] == 'schema')
+        schema_ownerships_that_exist = tuple(SchemaOwnership(perm['name_1']) for perm in existing_permissions if perm['on'] == 'schema' and perm['privilege_type'] == 'OWNER')
         schema_ownerships_to_revoke = tuple(schema_ownership for schema_ownership in schema_ownerships_that_exist if schema_ownership not in schema_ownerships)
         schema_ownerships_to_grant = tuple(schema_ownership for schema_ownership in schema_ownerships if schema_ownership not in schema_ownerships_that_exist)
 
@@ -516,6 +512,7 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
             and not schema_ownerships_to_revoke
             and not schema_ownerships_to_grant
             and not acl_table_permissions_to_revoke
+            and not acl_schema_permissions_to_revoke
         ):
             return
 
@@ -540,7 +537,7 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         existing_permissions = get_existing_permissions(role_name, preserve_existing_grants_in_schemas)
 
         # Gather all changes to be made to objects - the current user must be owner of them
-        schema_ownerships_that_exist = tuple(SchemaOwnership(perm['name_1']) for perm in existing_permissions if perm['on'] == 'schema')
+        schema_ownerships_that_exist = tuple(SchemaOwnership(perm['name_1']) for perm in existing_permissions if perm['on'] == 'schema' and perm['privilege_type'] == 'OWNER')
         schema_ownerships_to_revoke = tuple(schema_ownership for schema_ownership in schema_ownerships_that_exist if schema_ownership not in schema_ownerships)
         schema_ownerships_to_grant = tuple(schema_ownership for schema_ownership in schema_ownerships if schema_ownership not in schema_ownerships_that_exist)
         database_connect_roles = get_acl_roles(
@@ -560,20 +557,25 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
             all_table_select_names)
         table_select_roles_to_create = keys_with_none_value(table_select_roles)
         acl_table_permissions_to_revoke = get_acl_rows(existing_permissions, _TABLE_LIKE)
+        acl_schema_permissions_to_revoke = get_acl_rows(existing_permissions, _SCHEMA)
 
         # Find the roles that own all the objects to be manipulated
+        # For each table, we also need USAGE on its schemas, but it's not guaranteed that the
+        # current user would already have it. In most cases the owner of its schema would have usage
+        # Maybe there's a more robust way that would cover more cases, but it would be more complicated
         databases_needing_ownerships = \
             database_connect_roles_to_create
-        schemas_needing_ownership = \
-            tuple(schema_ownership.schema_name for schema_ownership in schema_ownerships_to_revoke) + \
-            tuple(schema_ownership.schema_name for schema_ownership in schema_ownerships_to_grant) + \
-            schema_usage_roles_to_create
         tables_needing_ownerships = \
             table_select_roles_to_create + \
             tuple((perm['name_1'], perm['name_2']) for perm in acl_table_permissions_to_revoke)
+        schemas_needing_ownership = \
+            tuple(schema_ownership.schema_name for schema_ownership in schema_ownerships_to_revoke) + \
+            tuple(schema_ownership.schema_name for schema_ownership in schema_ownerships_to_grant) + \
+            tuple(perm['name_1'] for perm in acl_schema_permissions_to_revoke) + \
+            schema_usage_roles_to_create + \
+            tuple(schema_name for schema_name, table_name in tables_needing_ownerships)
 
         # ... and temporarily grant the current user them
-        logger.info('tables ')
         database_owners = get_owners('pg_database', 'datdba', 'datname', databases_needing_ownerships)
         schema_owners = get_owners('pg_namespace', 'nspowner', 'nspname', schemas_needing_ownership)
         table_owners = get_owners_in_schema('pg_class', 'relowner', 'relnamespace', 'relname', tables_needing_ownerships)
@@ -616,9 +618,16 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
                 grant(sql_grants[SELECT], sql_object_types[TableSelect], (schema_name, table_name), table_select_role)
                 table_select_roles[(schema_name, table_name)] = table_select_role
 
-            # Revoke permissions on tables
+            # Re-check existing permissions because granting ownership by default gives the owner full permissions
+            existing_permissions = get_existing_permissions(role_name, preserve_existing_grants_in_schemas)
+            acl_table_permissions_to_revoke = get_acl_rows(existing_permissions, _TABLE_LIKE)
+            acl_schema_permissions_to_revoke = get_acl_rows(existing_permissions, _SCHEMA)
+
+            # Revoke direct permissions on tables and schemas
             for perm in acl_table_permissions_to_revoke:
-                revoke_table_perm(perm, role_name)
+                revoke(sql_grants[Privilege[perm['privilege_type']]], sql.SQL('TABLE'), (perm['name_1'], perm['name_2']), role_name)
+            for perm in acl_schema_permissions_to_revoke:
+                revoke(sql_grants[Privilege[perm['privilege_type']]], sql.SQL('SCHEMA'), (perm['name_1'],), role_name)
 
         # Grant login if we need to
         login_row = next((perm for perm in existing_permissions if perm['on'] == 'cluster' and perm['privilege_type'] == 'LOGIN'), None)
@@ -682,6 +691,10 @@ _TABLE_LIKE = {
     'foreign table',
     'partitioned table',
     'sequence',
+}
+
+_SCHEMA = {
+    'schema',
 }
 
 
@@ -771,6 +784,15 @@ UNION ALL
   FROM pg_namespace n
   INNER JOIN owned_or_acl a ON a.objid = n.oid
   WHERE classid = 'pg_namespace'::regclass AND deptype = 'o'
+
+  UNION ALL
+
+  -- Schema privileges
+  SELECT 'schema' AS on, nspname AS name_1, NULL AS name_2, NULL AS name_3, privilege_type
+  FROM pg_namespace n
+  INNER JOIN owned_or_acl a ON a.objid = n.oid
+  CROSS JOIN aclexplode(COALESCE(n.nspacl, acldefault('n', n.nspowner)))
+  WHERE classid = 'pg_namespace'::regclass AND grantee = refobjid
 
   UNION ALL
 
