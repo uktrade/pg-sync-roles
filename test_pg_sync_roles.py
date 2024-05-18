@@ -258,6 +258,7 @@ def test_initial_grant_takes_lock(test_engine, grants):
     lambda _, __: (Login(valid_until=datetime(2000,1,1, tzinfo=timezone.utc)),),
     lambda _, __: (DatabaseConnect(TEST_DATABASE_NAME),),
     lambda _, __: (RoleMembership(TEST_BASE_ROLE),),
+    lambda schema_name, table_name: (SchemaOwnership(schema_name),),
     lambda schema_name, table_name: (SchemaUsage(schema_name),),
 ])
 def test_identical_grant_does_not_take_lock(test_engine, test_table, get_grants):
