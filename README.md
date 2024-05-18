@@ -73,12 +73,13 @@ with engine.connect() as conn:
     )
 ```
 
-Or to give a role SELECT on a table, USAGE on a schema, membersip of a role, and OWNERship of another schema:
+Or to give a role SELECT on a table, USAGE on its schema, membersip of a role, and OWNERship+USAGE+CREATE of another schema:
 
 ```python
 from pg_sync_roles import (
     RoleMembership,
     SchemaUsage,
+    SchemaCreate,
     SchemaOwnership,
     TableSelect,
     sync_roles,
@@ -91,10 +92,12 @@ with engine.connect() as conn:
         conn,
         'my_role_name',
         grants=(
-            TableSelect('my_schema', 'my_table'),
             SchemaUsage('my_schema'),
-            RoleMembership('my_other_role'),
+            TableSelect('my_schema', 'my_table'),
             SchemaOwnership('my_other_schema'),
+            SchemaUsage('my_other_schema'),
+            SchemaCreate('my_other_schema'),
+            RoleMembership('my_other_role'),
         ),
     )
 ```

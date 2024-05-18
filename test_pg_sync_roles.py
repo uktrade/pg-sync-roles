@@ -732,6 +732,10 @@ def test_table_select_and_usage_if_owned_by_other_user(test_engine, test_table):
     with test_engine.connect() as conn:
         sync_roles(conn, role_name_1, grants=(
             SchemaOwnership(schema_name),
+            # While seemingly not necessary for the test, the syncing user needs USAGE on the schema
+            # to (initially) manage permissions of tables in it. This it gains by granting itself
+            # the owner role, which will then give it USAGE on it
+            SchemaUsage(schema_name),
         ))
 
     with test_engine.connect() as conn:
@@ -1036,6 +1040,30 @@ def test_direct_sequence_permission_is_revoked(test_engine, test_sequence):
 
     with engine.connect() as conn:
         with pytest.raises(sa.exc.ProgrammingError, match='permission denied for sequence'):
+            assert conn.execute(sa.text(f"SELECT nextval('{schema_name}.{sequence_name}');")).fetchall()[0][0] == 0
+
+
+def test_direct_usage_permission_is_revoked(test_engine, test_sequence):
+    schema_name, sequence_name = test_sequence
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=())
+
+    with test_engine.begin() as conn:
+        conn.execute(sa.text(f'GRANT USAGE ON SCHEMA {schema_name} TO {role_name}'))
+
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+        ))
+
+    with engine.connect() as conn:
+        with pytest.raises(sa.exc.ProgrammingError, match='permission denied for schema'):
             assert conn.execute(sa.text(f"SELECT nextval('{schema_name}.{sequence_name}');")).fetchall()[0][0] == 0
 
 
