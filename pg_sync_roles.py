@@ -585,41 +585,41 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
             for perm in acl_table_permissions_to_revoke:
                 revoke_table_perm(current_user, perm, role_name)
 
-            # Grant login if we need to
-            login_row = next((perm for perm in existing_permissions if perm['on'] == 'cluster' and perm['privilege_type'] == 'LOGIN'), None)
-            can_login = login_row is not None
-            valid_until = datetime.strptime(login_row['name_1'], '%Y-%m-%dT%H:%M:%S.%f%z') if login_row is not None else None
-            if logins_to_grant:
-                grant_login(role_name, logins[0])
-            logins_to_revoke = not logins and can_login
-            if logins_to_revoke:
-                revoke_login(role_name)
+        # Grant login if we need to
+        login_row = next((perm for perm in existing_permissions if perm['on'] == 'cluster' and perm['privilege_type'] == 'LOGIN'), None)
+        can_login = login_row is not None
+        valid_until = datetime.strptime(login_row['name_1'], '%Y-%m-%dT%H:%M:%S.%f%z') if login_row is not None else None
+        if logins_to_grant:
+            grant_login(role_name, logins[0])
+        logins_to_revoke = not logins and can_login
+        if logins_to_revoke:
+            revoke_login(role_name)
 
-            # Grant memberships if we need to
-            memberships = set(perm['name_1'] for perm in existing_permissions if perm['on'] == 'role' and perm['privilege_type'] == 'MEMBER')
-            database_connect_memberships_to_grant = tuple(role for role in database_connect_roles.values() if role not in memberships)
-            table_select_memberships_to_grant = tuple(role for role in table_select_roles.values() if role not in memberships)
-            schema_usage_memberships_to_grant = tuple(role for role in schema_usage_roles.values() if role not in memberships)
-            schema_create_memberships_to_grant = tuple(role for role in schema_create_roles.values() if role not in memberships)
-            role_memberships_to_grant = tuple(role_membership for role_membership in role_memberships if role_membership.role_name not in memberships)
-            for membership in role_memberships_to_grant:
-                if not get_role_exists(membership.role_name):
-                    create_role(membership.role_name)
-            grant_memberships(database_connect_memberships_to_grant \
-                + schema_usage_memberships_to_grant \
-                + schema_create_memberships_to_grant \
-                + table_select_memberships_to_grant \
-                + tuple(membership.role_name for membership in role_memberships),
-            role_name)
+        # Grant memberships if we need to
+        memberships = set(perm['name_1'] for perm in existing_permissions if perm['on'] == 'role' and perm['privilege_type'] == 'MEMBER')
+        database_connect_memberships_to_grant = tuple(role for role in database_connect_roles.values() if role not in memberships)
+        table_select_memberships_to_grant = tuple(role for role in table_select_roles.values() if role not in memberships)
+        schema_usage_memberships_to_grant = tuple(role for role in schema_usage_roles.values() if role not in memberships)
+        schema_create_memberships_to_grant = tuple(role for role in schema_create_roles.values() if role not in memberships)
+        role_memberships_to_grant = tuple(role_membership for role_membership in role_memberships if role_membership.role_name not in memberships)
+        for membership in role_memberships_to_grant:
+            if not get_role_exists(membership.role_name):
+                create_role(membership.role_name)
+        grant_memberships(database_connect_memberships_to_grant \
+            + schema_usage_memberships_to_grant \
+            + schema_create_memberships_to_grant \
+            + table_select_memberships_to_grant \
+            + tuple(membership.role_name for membership in role_memberships),
+        role_name)
 
-            # Revoke memberships if we need to
-            memberships_to_revoke = memberships \
-                - set(role_membership.role_name for role_membership in role_memberships) \
-                - set(role for role in database_connect_roles.values()) \
-                - set(role for role in schema_usage_roles.values()) \
-                - set(role for role in schema_create_roles.values()) \
-                - set(role for role in table_select_roles.values())
-            revoke_memberships(memberships_to_revoke, role_name)
+        # Revoke memberships if we need to
+        memberships_to_revoke = memberships \
+            - set(role_membership.role_name for role_membership in role_memberships) \
+            - set(role for role in database_connect_roles.values()) \
+            - set(role for role in schema_usage_roles.values()) \
+            - set(role for role in schema_create_roles.values()) \
+            - set(role for role in table_select_roles.values())
+        revoke_memberships(memberships_to_revoke, role_name)
 
 
 _KNOWN_PRIVILEGES = {
