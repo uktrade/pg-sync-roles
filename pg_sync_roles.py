@@ -523,12 +523,31 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         # Get all existing permissions
         existing_permissions = get_existing_permissions(role_name, preserve_existing_grants_in_schemas)
 
+        # Gather all changes to be made to objects - the current user must be owner of them
+        schema_ownerships_that_exist = tuple(SchemaOwnership(perm['name_1']) for perm in existing_permissions if perm['on'] == 'schema')
+        schema_ownerships_to_revoke = tuple(schema_ownership for schema_ownership in schema_ownerships_that_exist if schema_ownership not in schema_ownerships)
+        schema_ownerships_to_grant = tuple(schema_ownership for schema_ownership in schema_ownerships if schema_ownership not in schema_ownerships_that_exist)
+        database_connect_roles = get_acl_roles(
+            'CONNECT', 'pg_database', 'datname', 'datacl', '\\_pgsr\\_global\\_database\\_connect\\_%',
+            all_database_connect_names)
+        database_connect_roles_to_create = keys_with_none_value(database_connect_roles)
+        schema_usage_roles = get_acl_roles(
+            'USAGE', 'pg_namespace', 'nspname', 'nspacl', f'\\_pgsr\\_local\\_{db_oid}_\\schema\\_usage\\_%',
+            all_schema_usage_names)
+        schema_usage_roles_to_create = keys_with_none_value(schema_usage_roles)
+        schema_create_roles = get_acl_roles(
+            'CREATE', 'pg_namespace', 'nspname', 'nspacl', f'\\_pgsr\\_local\\_{db_oid}_\\schema\\_create\\_%',
+            all_schema_create_names)
+        schema_create_roles_to_create = keys_with_none_value(schema_create_roles)
+        table_select_roles = get_acl_roles_in_schema(
+            'SELECT', 'pg_class', 'relname', 'relacl', 'relnamespace', f'\\_pgsr\\_local\\_{db_oid}_\\table\\_select\\_%',
+            all_table_select_names)
+        table_select_roles_to_create = keys_with_none_value(table_select_roles)
+        acl_table_permissions_to_revoke = get_acl_rows(existing_permissions, _TABLE_LIKE)
+
         with temporary_grant_of(role_name):
 
             # Grant or revoke schema ownerships
-            schema_ownerships_that_exist = tuple(SchemaOwnership(perm['name_1']) for perm in existing_permissions if perm['on'] == 'schema')
-            schema_ownerships_to_revoke = tuple(schema_ownership for schema_ownership in schema_ownerships_that_exist if schema_ownership not in schema_ownerships)
-            schema_ownerships_to_grant = tuple(schema_ownership for schema_ownership in schema_ownerships if schema_ownership not in schema_ownerships_that_exist)
             for schema_ownership in schema_ownerships_to_revoke:
                 revoke_ownership(sql_object_types[SchemaUsage], role_name, schema_ownership.schema_name)
             for schema_ownership in schema_ownerships_to_grant:
@@ -537,10 +556,6 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
                 grant_ownership(sql_object_types[SchemaUsage], role_name, schema_ownership.schema_name)
 
             # Create database connect roles if we need to
-            database_connect_roles = get_acl_roles(
-                'CONNECT', 'pg_database', 'datname', 'datacl', '\\_pgsr\\_global\\_database\\_connect\\_%',
-                all_database_connect_names)
-            database_connect_roles_to_create = keys_with_none_value(database_connect_roles)
             for database_name in database_connect_roles_to_create:
                 database_connect_role = get_available_acl_role('_pgsr_global_database_connect_')
                 create_role(database_connect_role)
@@ -548,10 +563,6 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
                 database_connect_roles[database_name] = database_connect_role
 
             # Create schema usage roles if we need to
-            schema_usage_roles = get_acl_roles(
-                'USAGE', 'pg_namespace', 'nspname', 'nspacl', f'\\_pgsr\\_local\\_{db_oid}_\\schema\\_usage\\_%',
-                all_schema_usage_names)
-            schema_usage_roles_to_create = keys_with_none_value(schema_usage_roles)
             for schema_name in schema_usage_roles_to_create:
                 schema_usage_role = get_available_acl_role(f'_pgsr_local_{db_oid}_schema_usage_')
                 create_role(schema_usage_role)
@@ -559,10 +570,6 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
                 schema_usage_roles[schema_name] = schema_usage_role
 
             # Create schema create roles if we need to
-            schema_create_roles = get_acl_roles(
-                'CREATE', 'pg_namespace', 'nspname', 'nspacl', f'\\_pgsr\\_local\\_{db_oid}_\\schema\\_create\\_%',
-                all_schema_create_names)
-            schema_create_roles_to_create = keys_with_none_value(schema_create_roles)
             for schema_name in schema_create_roles_to_create:
                 schema_create_role = get_available_acl_role(f'_pgsr_local_{db_oid}_schema_create_')
                 create_role(schema_create_role)
@@ -570,10 +577,6 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
                 schema_create_roles[schema_name] = schema_create_role
 
             # Create table select roles if we need to
-            table_select_roles = get_acl_roles_in_schema(
-                'SELECT', 'pg_class', 'relname', 'relacl', 'relnamespace', f'\\_pgsr\\_local\\_{db_oid}_\\table\\_select\\_%',
-                all_table_select_names)
-            table_select_roles_to_create = keys_with_none_value(table_select_roles)
             for schema_name, table_name in table_select_roles_to_create:
                 table_select_role = get_available_acl_role(f'_pgsr_local_{db_oid}_table_select_')
                 create_role(table_select_role)
@@ -581,7 +584,6 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
                 table_select_roles[(schema_name, table_name)] = table_select_role
 
             # Revoke permissions on tables
-            acl_table_permissions_to_revoke = get_acl_rows(existing_permissions, _TABLE_LIKE)
             for perm in acl_table_permissions_to_revoke:
                 revoke_table_perm(current_user, perm, role_name)
 
