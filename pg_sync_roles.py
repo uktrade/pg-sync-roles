@@ -314,13 +314,12 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
             role_name=sql.Identifier(role_name),
         ))
 
-    def revoke_table_perm(perm, role_name):
+    def revoke_table_perm(current_user, perm, role_name):
         # We can't escape the privilege_type because it's a keyword, so we check it definitely is
         # one of the known ones, as a paranoia check against SQL-injection
         if perm['privilege_type'] not in _KNOWN_PRIVILEGES:
             raise RuntimeError('Unknown privilege')
 
-        current_user = execute_sql(sql.SQL('SELECT CURRENT_USER')).fetchall()[0][0]
         table_owner = execute_sql(sql.SQL(
             '''
             SELECT rolname FROM pg_class c
@@ -512,6 +511,10 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         if role_to_create:
             create_role(role_name)
 
+        # The current user - if we need to change ownership or grant directly on an object
+        # we need to check if the current use is the owner, and grant the owner to the user if not
+        current_user = execute_sql(sql.SQL('SELECT CURRENT_USER')).fetchall()[0][0]
+
         with temporary_grant_of(role_name):
 
             # Find existing objects where needed
@@ -616,7 +619,7 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
             # Revoke permissions on tables
             acl_table_permissions_to_revoke = get_acl_rows(existing_permissions, _TABLE_LIKE)
             for perm in acl_table_permissions_to_revoke:
-                revoke_table_perm(perm, role_name)
+                revoke_table_perm(current_user, perm, role_name)
 
 
 _KNOWN_PRIVILEGES = {
