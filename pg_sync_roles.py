@@ -108,17 +108,21 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
             conn.commit()
 
     @contextmanager
-    def temporary_grant_of(role_name):
+    def temporary_grant_of(role_names):
         # Expected to be called in a transaction context as above, so if an exception is thrown,
         # it will roll back. The REVOKE is _not_ in a finally: block because if there was an
         # this will then cause another error
-        execute_sql(sql.SQL('GRANT {role_name} TO CURRENT_USER').format(
-            role_name=sql.Identifier(role_name),
-        ))
+        logger.info("Temporarily granting roles %s to CURRENT_USER", role_names)
+        if role_names:
+            execute_sql(sql.SQL('GRANT {role_names} TO CURRENT_USER').format(
+                role_names=sql.SQL(',').join(sql.Identifier(role_name) for role_name, in role_names),
+            ))
         yield
-        execute_sql(sql.SQL('REVOKE {role_name} FROM CURRENT_USER').format(
-            role_name=sql.Identifier(role_name),
-        ))
+        logger.info("Revoking roles %s from CURRENT_USER", role_names)
+        if role_names:
+            execute_sql(sql.SQL('REVOKE {role_names} FROM CURRENT_USER').format(
+                role_names=sql.SQL(',').join(sql.Identifier(role_name) for role_name, in role_names)
+            ))
 
     def lock():
         execute_sql(sql.SQL("SELECT pg_advisory_xact_lock({lock_key})").format(lock_key=sql.Literal(lock_key)))
@@ -154,6 +158,43 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
             WHERE (nspname, {row_name_column_name}) IN ({values_to_search_for})
         ''').format(
             table_name=sql.Identifier(table_name),
+            namespace_column_name=sql.Identifier(namespace_column_name),
+            row_name_column_name=sql.Identifier(row_name_column_name),
+            values_to_search_for=sql.SQL(',').join(
+                sql.SQL('({},{})').format(sql.Literal(schema_name), sql.Literal(row_name))
+                for (schema_name, row_name) in values_to_search_for
+            )
+        )).fetchall()
+
+    def get_owners(table_name, owner_column_name, name_column_name, values_to_search_for):
+        if not values_to_search_for:
+            return []
+        return execute_sql(sql.SQL('''
+            SELECT DISTINCT rolname
+            FROM {table_name}
+            INNER JOIN pg_roles r ON r.oid = {owner_column_name}
+            WHERE {name_column_name} IN ({values_to_search_for})
+        ''').format(
+            table_name=sql.Identifier(table_name),
+            owner_column_name=sql.Identifier(owner_column_name),
+            name_column_name=sql.Identifier(name_column_name),
+            values_to_search_for=sql.SQL(',').join(
+                sql.Literal(value) for value in values_to_search_for
+            )
+        )).fetchall()
+
+    def get_owners_in_schema(table_name, owner_column_name, namespace_column_name, row_name_column_name, values_to_search_for):
+        if not values_to_search_for:
+            return []
+        return execute_sql(sql.SQL('''
+            SELECT DISTINCT rolname
+            FROM {table_name} c
+            INNER JOIN pg_namespace n ON n.oid = c.{namespace_column_name}
+            INNER JOIN pg_roles r ON r.oid = {owner_column_name}
+            WHERE (nspname, {row_name_column_name}) IN ({values_to_search_for})
+        ''').format(
+            table_name=sql.Identifier(table_name),
+            owner_column_name=sql.Identifier(owner_column_name),
             namespace_column_name=sql.Identifier(namespace_column_name),
             row_name_column_name=sql.Identifier(row_name_column_name),
             values_to_search_for=sql.SQL(',').join(
@@ -314,30 +355,11 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
             role_name=sql.Identifier(role_name),
         ))
 
-    def revoke_table_perm(current_user, perm, role_name):
+    def revoke_table_perm(perm, role_name):
         # We can't escape the privilege_type because it's a keyword, so we check it definitely is
         # one of the known ones, as a paranoia check against SQL-injection
         if perm['privilege_type'] not in _KNOWN_PRIVILEGES:
             raise RuntimeError('Unknown privilege')
-
-        table_owner = execute_sql(sql.SQL(
-            '''
-            SELECT rolname FROM pg_class c
-            INNER JOIN pg_namespace n ON n.oid = c.relnamespace
-            INNER JOIN pg_roles r ON r.oid = c.relowner
-            WHERE nspname = {schema_name}
-            AND relname = {table_name}
-            '''
-        ).format(
-            schema_name=sql.Literal(perm['name_1']),
-            table_name=sql.Literal(perm['name_2']),
-        )).fetchall()[0][0]
-
-        if current_user != table_owner:
-            logger.info("Granting temporary ownership %s.%s to CURRENT_USER", perm['name_1'], perm['name_2'])
-            execute_sql(sql.SQL('GRANT {table_owner} TO CURRENT_USER').format(
-                table_owner=sql.Identifier(table_owner)
-            ))
 
         logger.info("Revoking %s on %s.%s from %s", perm['privilege_type'], perm['name_1'], perm['name_2'], role_name)
         execute_sql(sql.SQL('REVOKE {privilege_type} ON TABLE {schema_name}.{table_name} FROM {role_name}').format(
@@ -346,12 +368,6 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
             table_name=sql.Identifier(perm['name_2']),
             role_name=sql.Identifier(role_name),
         ))
-
-        logger.info("Revoking temporary ownership of %s.%s from CURRENT_USER", perm['name_1'], perm['name_2'])
-        if current_user != table_owner:
-            execute_sql(sql.SQL('REVOKE {table_owner} FROM CURRENT_USER').format(
-                table_owner=sql.Identifier(table_owner)
-            ))
 
     def keys_with_none_value(d):
         return tuple(key for key, value in d.items() if value is None)
@@ -545,7 +561,24 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         table_select_roles_to_create = keys_with_none_value(table_select_roles)
         acl_table_permissions_to_revoke = get_acl_rows(existing_permissions, _TABLE_LIKE)
 
-        with temporary_grant_of(role_name):
+        # Find the roles that own all the objects to be manipulated
+        databases_needing_ownerships = \
+            database_connect_roles_to_create
+        schemas_needing_ownership = \
+            tuple(schema_ownership.schema_name for schema_ownership in schema_ownerships_to_revoke) + \
+            tuple(schema_ownership.schema_name for schema_ownership in schema_ownerships_to_grant) + \
+            schema_usage_roles_to_create
+        tables_needing_ownerships = \
+            table_select_roles_to_create + \
+            tuple((perm['name_1'], perm['name_2']) for perm in acl_table_permissions_to_revoke)
+
+        # ... and temporarily grant the current user them
+        logger.info('tables ')
+        database_owners = get_owners('pg_database', 'datdba', 'datname', databases_needing_ownerships)
+        schema_owners = get_owners('pg_namespace', 'nspowner', 'nspname', schemas_needing_ownership)
+        table_owners = get_owners_in_schema('pg_class', 'relowner', 'relnamespace', 'relname', tables_needing_ownerships)
+        owners_to_grant = tuple(({(role_name,)} | set(database_owners) | set(schema_owners) | set(table_owners)) - {(current_user,)})
+        with temporary_grant_of(owners_to_grant):
 
             # Grant or revoke schema ownerships
             for schema_ownership in schema_ownerships_to_revoke:
@@ -585,7 +618,7 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
 
             # Revoke permissions on tables
             for perm in acl_table_permissions_to_revoke:
-                revoke_table_perm(current_user, perm, role_name)
+                revoke_table_perm(perm, role_name)
 
         # Grant login if we need to
         login_row = next((perm for perm in existing_permissions if perm['on'] == 'cluster' and perm['privilege_type'] == 'LOGIN'), None)
