@@ -1117,6 +1117,30 @@ def test_schema_create_roles_can_create_sequence(test_engine, test_view):
         conn.execute(sa.text(f'CREATE SEQUENCE {schema_name}.{sequence_name} START 101;'))
 
 
+def test_can_use_schema_if_just_created(test_engine):
+    role_name = get_test_role()
+    schema_name = role_name
+
+    with test_engine.connect() as conn:
+        valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+        sync_roles(conn, role_name, preserve_existing_grants_in_schemas=(schema_name,), grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaOwnership(schema_name),
+            SchemaUsage(schema_name),
+            SchemaCreate(schema_name),
+        ))
+
+    role_engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    new_table_name = 'test_table_' + uuid.uuid4().hex
+
+    with role_engine.begin() as conn:
+        conn.execute(sa.text(f'CREATE TABLE {schema_name}.{new_table_name} (id int)'))
+
+    with role_engine.connect() as conn:
+        assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{new_table_name}")).fetchall()[0][0] == 0
+
+
 def test_team_role_privileges_are_preserved(test_engine):
     # Tries to emulate a feature of Data Workspace https://github.com/uktrade/data-workspace-frontend,
     # where users have membership of "team roles" with associated team schemas. The team schemas
