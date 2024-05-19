@@ -426,9 +426,11 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         tables_that_exist = set(get_existing_in_schema('pg_class', 'relnamespace', 'relname', all_table_names))
 
         # Filter out ACLs grants for databases, schemas and tables that don't exist
+        # (But including ACLs on schemas that we're going to own and so will create if necessary)
         database_connects = tuple(database_connect for database_connect in database_connects if (database_connect.database_name,) in databases_that_exist)
-        schema_usages = tuple(schema_usage for schema_usage in schema_usages if (schema_usage.schema_name,) in schemas_that_exist)
-        schema_creates = tuple(schema_create for schema_create in schema_creates if (schema_create.schema_name,) in schemas_that_exist)
+        schema_ownerships_names = set(schema_ownership.schema_name for schema_ownership in schema_ownerships)
+        schema_usages = tuple(schema_usage for schema_usage in schema_usages if (schema_usage.schema_name,) in schemas_that_exist or schema_usage.schema_name in schema_ownerships_names)
+        schema_creates = tuple(schema_create for schema_create in schema_creates if (schema_create.schema_name,) in schemas_that_exist or schema_create.schema_name in schema_ownerships_names)
         table_selects = tuple(table_select for table_select in table_selects if (table_select.schema_name, table_select.table_name) in tables_that_exist)
         all_database_connect_names = tuple(grant.database_name for grant in database_connects)
         all_schema_usage_names = tuple(grant.schema_name for grant in schema_usages)
@@ -455,7 +457,6 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
             'USAGE', 'pg_namespace', 'nspname', 'nspacl', f'\\_pgsr\\_local\\_{db_oid}_\\schema\\_usage\\_%',
             all_schema_usage_names)
         schema_usage_roles_to_create = keys_with_none_value(schema_usage_roles)
-
         schema_create_roles = get_acl_roles(
             'CREATE', 'pg_namespace', 'nspname', 'nspacl', f'\\_pgsr\\_local\\_{db_oid}_\\schema\\_create\\_%',
             all_schema_create_names)
@@ -548,6 +549,7 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
             'USAGE', 'pg_namespace', 'nspname', 'nspacl', f'\\_pgsr\\_local\\_{db_oid}_\\schema\\_usage\\_%',
             all_schema_usage_names)
         schema_usage_roles_to_create = keys_with_none_value(schema_usage_roles)
+
         schema_create_roles = get_acl_roles(
             'CREATE', 'pg_namespace', 'nspname', 'nspacl', f'\\_pgsr\\_local\\_{db_oid}_\\schema\\_create\\_%',
             all_schema_create_names)
