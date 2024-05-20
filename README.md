@@ -171,7 +171,7 @@ The advisory lock is only obtained if `sync_roles` detects there are changes to 
 
 ## Under the hood
 
-pg-sync-roles maintains a role per database perimission, a role per schema pemission, and a role per table permission. Rather than roles being granted permissions directly on objects, membership is granted to these roles that indirectly grant permissions on objects. This means that from the object's point of view, only 1 role has any given permission. This works around the de-facto limit on the number of roles that can have permission to any object.
+pg-sync-roles maintains a role per database permission, a role per schema permission, and a role per table permission. Rather than roles being granted permissions directly on objects, membership is granted to these roles that indirectly grant permissions on objects. This means that from the object's point of view, only 1 role has any given permission. This works around the de-facto limit on the number of roles that can have permission to any object.
 
 The names of the roles maintained by pg-sync-roles begin with the prefix `_pgsr_`. Each name ends with a randomly generated unique identifier.
 
