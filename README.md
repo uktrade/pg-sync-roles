@@ -20,6 +20,7 @@ pg-sync-roles should not be used on roles that should have permissions to multip
 - [Under the hood](#under-the-hood)
 - [Compatibility](#compatibility)
 - [Running tests locally](#running-tests-locally)
+- [Design decisions](#design-decisions)
 
 ---
 
@@ -40,6 +41,9 @@ pg-sync-roles should not be used on roles that should have permissions to multip
  These features make pg-sync-roles useful when using PostgreSQL as a data warehouse with a high number of users that need granular permissions. The lack of SUPERUSER requirement means that pg-sync-roles is suitable for managed PostgreSQL clusters, for example in Amazon RDS.
  
  Other types of privileges and other object types may be added in future versions.
+
+> [!IMPORTANT]  
+> pg-sync-roles does not revoke any permissions granted to the PUBLIC pseudo-role
 
 
 ## Installation
@@ -197,3 +201,47 @@ python -m pip install psycopg -e ".[dev]"  # Only needed once
 ./start-services.sh                        # Only needed once
 pytest
 ```
+
+
+## Design decisions
+
+This information isn't needed to use pg-sync-roles, it's more for developers of pg-sync-roles itself.
+
+### Existence of this project
+
+It was factored out from https://github.com/uktrade/data-workspace-frontend, mostly from the "new_private_database_credentials" function, which was several hundred lines long and a bit "sprawling" - lots of duplication and it was hard to see what was going on.
+
+Having it factored out makes it:
+
+- Easier to test and develop for multiple versions of Python, PostgreSQL and other packages such as Psycopg and SQLAlchemy, and so give confidence to where it's used as packages are updated.
+- Easier to reuse in other projects, and so better adhere to the "reuse" part of [Point 12 of the Service Standard](https://www.gov.uk/service-manual/service-standard). Interally in the DBT we now have 2 use cases for this - one on the data egress side as part of https://github.com/uktrade/data-workspace-frontend, and one on the ingest side.
+- Easier to make/more strongly encourages a well defined and (eventually) well documented API that makes it clear exactly what permissions each user has, and makes it easier to change them.
+- Easier to be maintained by a separate team to the one that maintains the user-facing components in https://github.com/uktrade/data-workspace-frontend.
+
+None of this is impossible if the code stayed with https://github.com/uktrade/data-workspace-frontend, but it would make all the above more awkward. The confluence of all the above aspects made it seem worth the separation.
+
+
+### Usage of roles
+
+pg-sync-roles creates intermediate roles for ACL-type permissions like CONNECT, SELECT and USAGE. This is to support high numbers of users being granted these privileges.
+
+There didn't really seem to be any viable alternative to maintain a way of granting per table+per user permissions in a system that had several thousand users such as Data Workspace. Without the roles when GRANTing there could be "row is too big" when the numbers of grantees on an object reaches around 2 thousand. This is because many of the catalog tables do not support the PostgreSQL TOAST system, and so a value in the row, such as the acl field that stores the grantees on the object, is limited to a single database page, which by default is 8kb https://stackoverflow.com/a/57089028/1319998.
+
+Apparently we can compile our own PostgreSQL with a bigger table size, but we wouldn't be able to run on Amazon RDS, or probably any managed service.
+
+Also having high numbers of grantees on each object makes full table scans on the catalog tables very slow: 10 to 30 seconds to search though pg_class in Data Workspace for example.
+
+
+### Structure of the role names
+
+The role names have a unique identifier in them, but this is _not_ tied to any property of the object they are related to - they are randomly generated. While it maybe makes it a touch harder to see what object each role is for, this makes it fine to move permissions from one object to another, and everything will continue to work as expected. This makes certain ingests easier because they can swap a table with new table, copy all grantees from the old to the new, and everything will continue to work. Also tables can be renamed without any effect on their permissions.
+
+Note that database clusters can have multiple databases on them, and roles are shared between all databases in a cluster. Also, some objects are shared between all databases (strangely, those in pg_databases itself), and some are just visible to the currently connected database (for example pg_class). To support efficiently working just on a single database on a time in future versions, the role names on objects that are private to a single database also contain the oid of the corresponding row in pg_database. This is a slight "just in case" feature, but the overhead is minimial and it keeps options open for the future - for example to only revoke permissions on the currently connected database if there are multiple databases at play.
+
+
+### A declarative API
+
+The API is not one that offers, for example, a "give a role this permission in addition to what they already have", but instead requires a full list of permissions, and pg-sync-roles works out what changes needs to be made and makes them. While this means there is quite a lot of code in pg-sync-roles:
+
+- pg-sync-roles is "self correcting" - if a change is lost, or manually undone in the database somehow, it will be fixed.
+- pg-sync-roles supports cases where, for example, a full list of permissions is stored in a config file and there isn't really a "one at a time" process
