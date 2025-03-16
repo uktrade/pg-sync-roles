@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 
 from pg_sync_roles import (
     sync_roles,
+    drop_unused_roles,
     Login,
     DatabaseConnect,
     RoleMembership,
@@ -723,6 +724,63 @@ def test_table_select_granted_can_query(test_engine, test_table):
         assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
 
 
+def test_table_select_granted_can_query_after_deleting_unused_roles(test_engine, test_table):
+    schema_name, table_name = test_table
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaUsage(schema_name),
+            TableSelect(schema_name, table_name),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+
+    with engine.connect() as conn:
+        drop_unused_roles(conn)
+
+    with engine.connect() as conn:
+        assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
+
+
+def test_table_select_cleared_after_deleting_table(test_engine, test_table):
+    schema_name, table_name = test_table
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        drop_unused_roles(conn)
+
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaUsage(schema_name),
+            TableSelect(schema_name, table_name),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+
+    with test_engine.connect() as conn:
+        # Dropping unused rules in case we have any left over from other tests
+        drop_unused_roles(conn)
+
+    with test_engine.connect() as conn:
+        number_of_roles_before = conn.execute(sa.text("SELECT count(*) FROM pg_roles")).fetchall()[0][0]
+
+    with test_engine.connect() as conn:
+        conn.execution_options(isolation_level='AUTOCOMMIT')
+        conn.execute(sa.text(f"DROP TABLE {schema_name}.{table_name}"))
+
+    with test_engine.connect() as conn:
+        drop_unused_roles(conn)
+
+    with test_engine.connect() as conn:
+        number_of_roles_after = conn.execute(sa.text("SELECT count(*) FROM pg_roles")).fetchall()[0][0]
+
+    assert number_of_roles_after == number_of_roles_before - 1
+
+
 def test_table_select_and_usage_if_owned_by_other_user(test_engine, test_table):
     schema_name, table_name = test_table
     role_name_1 = get_test_role()
@@ -791,7 +849,6 @@ def test_table_select_granted_can_query_even_if_another_table_in_schema_not_exis
     engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
     with engine.connect() as conn:
         assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
-
 
 def test_schema_usage_repeated_does_not_increase_role_count(test_engine, test_table):
     schema_name, table_name = test_table
