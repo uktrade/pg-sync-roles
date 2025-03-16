@@ -1,4 +1,5 @@
 from enum import Enum
+from functools import partial
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -89,23 +90,33 @@ class RoleMembership:
     role_name: str
 
 
-def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(), lock_key=1):
-    def execute_sql(sql_obj):
-        # This avoids "argument 1 must be psycopg2.extensions.connection, not PGConnectionProxy"
-        # which can happen when elastic-apm wraps the connection object when using psycopg2
-        unwrapped_connection = getattr(conn.connection.driver_connection, '__wrapped__', conn.connection.driver_connection)
-        return conn.execute(sa.text(sql_obj.as_string(unwrapped_connection)))
+def _execute_sql(conn, sql_obj):
+    # This avoids "argument 1 must be psycopg2.extensions.connection, not PGConnectionProxy"
+    # which can happen when elastic-apm wraps the connection object when using psycopg2
+    unwrapped_connection = getattr(conn.connection.driver_connection, '__wrapped__', conn.connection.driver_connection)
+    return conn.execute(sa.text(sql_obj.as_string(unwrapped_connection)))
 
-    @contextmanager
-    def transaction():
-        try:
-            conn.begin()
-            yield
-        except Exception:
-            conn.rollback()
-            raise
-        else:
-            conn.commit()
+
+@contextmanager
+def _transaction(conn):
+    try:
+        conn.begin()
+        yield
+    except Exception:
+        conn.rollback()
+        raise
+    else:
+        conn.commit()
+
+
+def _lock(execute_sql, lock_key, sql):
+    execute_sql(sql.SQL("SELECT pg_advisory_xact_lock({lock_key})").format(lock_key=sql.Literal(lock_key)))
+
+
+def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(), lock_key=1):
+    execute_sql = partial(_execute_sql, conn)
+    transaction = partial(_transaction, conn)
+    lock = partial(_lock, execute_sql, lock_key)
 
     @contextmanager
     def temporary_grant_of(role_names):
@@ -123,9 +134,6 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
             execute_sql(sql.SQL('REVOKE {role_names} FROM CURRENT_USER').format(
                 role_names=sql.SQL(',').join(sql.Identifier(role_name) for role_name, in role_names)
             ))
-
-    def lock():
-        execute_sql(sql.SQL("SELECT pg_advisory_xact_lock({lock_key})").format(lock_key=sql.Literal(lock_key)))
 
     def get_database_oid():
         return execute_sql(sql.SQL('''
@@ -518,7 +526,7 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
             return
 
         # But If we do need to make changes, lock, and then re-check everything
-        lock()
+        lock(sql)
 
         # Make the role if we need to
         role_to_create = not get_role_exists(role_name)
@@ -668,6 +676,36 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         revoke_memberships(memberships_to_revoke, role_name)
 
 
+def drop_unused_roles(conn, lock_key=1):
+    logger.info('Dropping unused roles...')
+
+    execute_sql = partial(_execute_sql, conn)
+    transaction = partial(_transaction, conn)
+    lock = partial(_lock, execute_sql, lock_key)
+
+    # Choose the correct library for dynamically constructing SQL based on the underlying
+    # engine of the SQLAlchemy connection
+    sql = {
+        'psycopg2': sql2,
+        'psycopg': sql3,
+    }[conn.engine.driver]
+
+    with transaction():
+        results =  execute_sql(sql.SQL(_UNUSED_ROLES_SQL)).fetchall()
+
+        if not results:
+            logger.info('No roles to drop')
+            return
+
+        lock(sql)
+
+        for role_name, in results:
+            logger.info('Dropping role %s', role_name)
+            execute_sql(sql.SQL('DROP ROLE {role_name}').format(
+                role_name=sql.Identifier(role_name)
+            ))
+
+
 _KNOWN_PRIVILEGES = {
     'SELECT',
     'INSERT',
@@ -807,4 +845,79 @@ UNION ALL
   INNER JOIN relkind_mapping r ON r.relkind = c.relkind
   WHERE classid = 'pg_class'::regclass AND grantee = refobjid AND objsubid = 0
 )
+'''
+
+_UNUSED_ROLES_SQL = '''
+SELECT
+  r.rolname
+FROM
+  pg_roles r
+LEFT JOIN
+  (
+    SELECT
+      grantee
+    FROM
+      pg_class, aclexplode(relacl)
+    WHERE
+      grantee::regrole::text LIKE '\\_pgsr\\_local\\_%\\_table\\_select\\_%'
+  ) in_use_roles ON in_use_roles.grantee = r.oid
+WHERE
+  r.rolname LIKE '\\_pgsr\\_local\\_%\\_table\\_select\\_%' AND grantee IS NULL
+
+UNION ALL
+
+SELECT
+  r.rolname
+FROM
+  pg_roles r
+LEFT JOIN
+  (
+    SELECT
+      grantee
+    FROM
+      pg_namespace, aclexplode(nspacl)
+    WHERE
+      grantee::regrole::text LIKE '\\_pgsr\\_%\\_schema\\_usage\\_%'
+  ) in_use_roles ON in_use_roles.grantee = r.oid
+WHERE
+  r.rolname LIKE '\\_pgsr\\_%\\_schema\\_usage\\_%' AND grantee IS NULL
+
+UNION ALL
+
+SELECT
+  r.rolname
+FROM
+  pg_roles r
+LEFT JOIN
+  (
+    SELECT
+      grantee
+    FROM
+      pg_namespace, aclexplode(nspacl)
+    WHERE
+      grantee::regrole::text LIKE '\\_pgsr\\_%\\_schema\\_create\\_%'
+  ) in_use_roles ON in_use_roles.grantee = r.oid
+WHERE
+  r.rolname LIKE '\\_pgsr\\_%\\_schema\\_create\\_%' AND grantee IS NULL
+
+UNION ALL
+
+SELECT
+  r.rolname
+FROM
+  pg_roles r
+LEFT JOIN
+  (
+    SELECT
+      grantee
+    FROM
+      pg_database, aclexplode(datacl)
+    WHERE
+      grantee::regrole::text LIKE '%\\_pgsr\\_%\\_database\\_connect\\_%'
+  ) in_use_roles ON in_use_roles.grantee = r.oid
+WHERE
+  r.rolname LIKE '%\\_pgsr\\_%\\_database\\_connect\\_%' AND grantee IS NULL
+
+ORDER BY
+  1
 '''

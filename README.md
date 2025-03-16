@@ -164,6 +164,21 @@ with engine.connect() as conn:
 #### `SchemaOwnership(schema_name)`
 
 
+### Function to delete unused/orphan roles
+
+The DatabaseConnect, SchemaUsage, SchemaCreate, and TableSelect grant types result can result in unused/orphan roles if the objects they relate to are deleted. To delete all of these unused roles, you can periodically call the function `delete_unused_roles`.
+
+#### `delete_unused_roles(conn, lock_key=1)`
+
+- `conn`
+
+   A SQLAlchemy connection with an engine of dialect `postgresql+psycopg` or `postgresql+psycopg2`. For SQLAlchemy < 2 `future=True` must be passed to its create_engine function.
+
+- `lock_key=1`
+
+   The key for the advisory lock taken before changes are made. See [Locking](#locking) for more details.
+
+
 ## Locking
 
 pg-sync-roles obtains an advisory exclusive lock before making any changes - this avoids "tuple concurrently updated" or "tuple concurrently deleted" errors that can be raised when multiple connections change or delete the same permissions-related rows. It does this by calling the `pg_advisory_xact_lock(key bigint)` function. By default a key of 1 is used, but this can be changed by passing a different integer key as the `lock_key` parameter to `sync_roles`.
