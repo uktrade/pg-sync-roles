@@ -26,6 +26,7 @@ jobs:
           - "postgres:14.0"
           - "postgres:15.0"
           - "postgres:16.0"
+          - "postgres:17.0"
         ci-extras:
           - ci-psycopg2-sqlalchemy1
           - ci-psycopg2-sqlalchemy2
