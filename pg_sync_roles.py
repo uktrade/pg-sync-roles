@@ -244,7 +244,7 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
 
     def get_acl_roles_in_schema(privilege_type, table_name, row_name_column_name, acl_column_name, namespace_oid_column_name, role_pattern, row_names):
         row_name_role_names = \
-            [] if not table_selects else \
+            [] if not row_names else \
             execute_sql(sql.SQL("""
                 SELECT all_names.schema_name, all_names.row_name, grantee::regrole
                 FROM (
