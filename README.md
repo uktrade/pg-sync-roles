@@ -26,7 +26,8 @@ pg-sync-roles should not be used on roles that should have permissions to multip
 
 ## Features
 
-- Transparently handles high numbers of permissions - avoiding "row is too big" errors.
+- Handles high numbers of permissions on database objects - avoiding "row is too big" errors by transparently creating and using intermediate roles
+- Also can minimise role memberships by optionally avoiding the intermediate role for certain grant types
 - Locks where necessary - working around "tuple concurrently updated" or "tuple concurrently deleted" errors that can happen when permission changes are performed concurrently.
 - Does _not_ require the connecting user to be SUPERUSER
 - Can grant (and so automatically revokes if not requested):
@@ -117,6 +118,31 @@ with engine.connect() as conn:
     )
 ```
 
+Or to give a role USAGE on its schema, and SELECT on two tables _without_ creating intermediate roles:
+
+```python
+from pg_sync_roles import (
+    SchemaUsage,
+    TableSelect,
+    sync_roles,
+)
+
+engine = sa.create_engine('postgresql+psycopg://postgres@127.0.0.1:5432/')
+
+with engine.connect() as conn:
+    sync_roles(
+        conn,
+        'my_role_name',
+        grants=(
+            SchemaUsage('my_schema', direct=True),
+            TableSelect('my_schema', 'my_table', direct=True),
+            TableSelect('my_schema', 'my_other_table', direct=True),
+        ),
+    )
+```
+
+This can be useful to avoid performance problems due to the high numbers of roles/role memberships when dealing with thousands of tables and thousands of users: permissions can be granted to a low number of roles that are shared, and users granted memberships of these roles.
+
 
 ## API
 
@@ -153,11 +179,11 @@ with engine.connect() as conn:
 
 #### `DatabaseConnect(database_name)`
 
-#### `SchemaUsage(schema_name)`
+#### `SchemaUsage(schema_name, direct=False)`
 
 #### `SchemaCreate(schema_name)`
 
-#### `TableSelect(schema_name, table_name)`
+#### `TableSelect(schema_name, table_name, direct=False)`
 
 #### `RoleMembership(role_name)`
 
@@ -190,7 +216,9 @@ The advisory lock is only obtained if `sync_roles` detects there are changes to 
 
 ## Under the hood
 
-pg-sync-roles maintains a role per database permission, a role per schema permission, and a role per table permission. Rather than roles being granted permissions directly on objects, membership is granted to these roles that indirectly grant permissions on objects. This means that from the object's point of view, only 1 role has any given permission. This works around the de-facto limit on the number of roles that can have permission to any object.
+The default behaviour for pg-sync-roles is to maintain a role per database permission, a role per schema permission, and a role per table permission. Rather than roles being granted permissions directly on objects, membership is granted to these roles that indirectly grant permissions on objects. This means that from the object's point of view, only 1 role has any given permission. This works around the de-facto limit on the number of roles that can have permission to any object.
+
+If the `TableSelect` and `SchemaUsage` grant types are constructed with `direct=True`, then the role is granted permission directly on the object without use of an intermediate role. This can be useful to minimise the number of role memberships.
 
 The names of the roles maintained by pg-sync-roles begin with the prefix `_pgsr_`. Each name ends with a randomly generated unique identifier.
 
@@ -236,7 +264,7 @@ Having it factored out makes it:
 None of this is impossible if the code stayed with https://github.com/uktrade/data-workspace-frontend, but it would make all the above more awkward. The confluence of all the above aspects made it seem worth the separation.
 
 
-### Usage of roles
+### Usage of intermediate roles
 
 pg-sync-roles creates intermediate roles for ACL-type permissions like CONNECT, SELECT and USAGE. This is to support high numbers of users being granted these privileges.
 
@@ -245,6 +273,13 @@ There didn't really seem to be any viable alternative to maintain a way of grant
 Apparently we can compile our own PostgreSQL with a bigger table size, but we wouldn't be able to run on Amazon RDS, or probably any managed service.
 
 Also having high numbers of grantees on each object makes full table scans on the catalog tables very slow: 10 to 30 seconds to search though pg_class in Data Workspace for example.
+
+
+### Avoiding usage of intermediate roles for some cases
+
+For table SELECT and schema USAGE, the grant types support a `direct=True` mode that avoids the intermediate roles. This is because we had a system where for users with high numbers of intermediate roles, two to three thousand, "sometimes" it would take > 90 seconds to initiate a connection to the database, while users with low numbers of roles would consistently connect almost instantly.
+
+The reasons for this was never discovered, and exactly what "sometimes" was never pinned down — although calling CREATE ROLE seemed to be highly corrolated with subsequent slow connection times. However, since this setup had thousands of roles and _millions_ of rows in `pg_auth_members`, it felt like a situation that PostgreSQL was not designed for. By judicious use of `direct=True`, we could reduce the amount of role memberships for users by 1-2 orders of magnitude.
 
 
 ### Structure of the role names
