@@ -463,7 +463,7 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         table_selects_direct_tuples = tuple(('SELECT', table_select.schema_name, table_select.table_name) for table_select in table_selects_direct)
         table_selects_direct_set = set(table_selects_direct_tuples)
         acl_table_permissions_to_revoke = tuple(row for row in acl_table_permissions_tuples if row not in table_selects_direct_set)
-        acl_table_permissions_to_grant = tuple(row for row in table_selects_direct_tuples if row not in table_selects_direct_set)
+        acl_table_permissions_to_grant = tuple(row for row in table_selects_direct_tuples if row not in acl_table_permissions_set)
 
         # Real ACL permissions on schemas
         acl_schema_permissions_tuples = tuple((row['privilege_type'], row['name_1']) for row in get_acl_rows(existing_permissions, _SCHEMA))

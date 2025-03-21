@@ -775,6 +775,58 @@ def test_table_select_granted_can_query(test_engine, test_table, schema_usage_di
 
 @pytest.mark.parametrize('schema_usage_direct', (False, True))
 @pytest.mark.parametrize('table_select_direct', (False, True))
+def test_table_select_in_two_steps_on_select_can_query(test_engine, test_table, schema_usage_direct, table_select_direct):
+    schema_name, table_name = test_table
+    role_name = get_test_role()
+    role_with_direct_permissions = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            RoleMembership(role_with_direct_permissions),
+        ))
+        sync_roles(conn, role_with_direct_permissions, grants=(
+            SchemaUsage(schema_name, direct=schema_usage_direct),
+        ))
+        sync_roles(conn, role_with_direct_permissions, grants=(
+            SchemaUsage(schema_name, direct=schema_usage_direct),
+            TableSelect(schema_name, table_name, direct=table_select_direct),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with engine.connect() as conn:
+        assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
+
+
+@pytest.mark.parametrize('schema_usage_direct', (False, True))
+@pytest.mark.parametrize('table_select_direct', (False, True))
+def test_table_select_in_two_steps_on_usage_can_query(test_engine, test_table, schema_usage_direct, table_select_direct):
+    schema_name, table_name = test_table
+    role_name = get_test_role()
+    role_with_direct_permissions = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            RoleMembership(role_with_direct_permissions),
+        ))
+        sync_roles(conn, role_with_direct_permissions, grants=(
+            TableSelect(schema_name, table_name, direct=table_select_direct),
+        ))
+        sync_roles(conn, role_with_direct_permissions, grants=(
+            SchemaUsage(schema_name, direct=schema_usage_direct),
+            TableSelect(schema_name, table_name, direct=table_select_direct),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with engine.connect() as conn:
+        assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
+
+
+@pytest.mark.parametrize('schema_usage_direct', (False, True))
+@pytest.mark.parametrize('table_select_direct', (False, True))
 def test_table_select_granted_can_query_after_deleting_unused_roles(test_engine, test_table, schema_usage_direct, table_select_direct):
     schema_name, table_name = test_table
     role_name = get_test_role()
