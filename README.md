@@ -301,7 +301,7 @@ The advisory lock is only obtained if `sync_roles` detects there are changes to 
 
 The default behaviour for pg-sync-roles is to maintain a role per database permission, a role per schema permission, and a role per table permission. Rather than roles being granted permissions directly on objects, membership is granted to these roles that indirectly grant permissions on objects. This means that from the object's point of view, only 1 role has any given permission. This works around the de-facto limit on the number of roles that can have permission to any object.
 
-If the `TableSelect` and `SchemaUsage` grant types are constructed with `direct=True`, then the role is granted permission directly on the object without use of an intermediate role. This can be useful to minimise the number of role memberships.
+If the `TableSelect` and `SchemaUsage` grant types are constructed with `direct=True`, then the role is granted permission directly on the object without use of an intermediate role. This can be useful to minimise the number of role memberships; in some cases [a high number of role memberships can result in the connecting user taking an extremely long time to connect to the database](https://www.postgresql.org/message-id/CAJe2WWhxzbt_uszVYnyfw4Y%2BOdeHXdue0GD%2BOd5uk15XD_FL5w%40mail.gmail.com).
 
 The names of the roles maintained by pg-sync-roles begin with the prefix `_pgsr_`. Each name ends with a randomly generated unique identifier.
 
