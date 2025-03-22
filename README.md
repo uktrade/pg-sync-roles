@@ -17,7 +17,7 @@ Using pg-sync-rples
 
 - [Features](#features)
 - [Installation](#installation)
-- [Usage](#usage)
+- [Usage examples](#usage-examples)
 - [API](#api)
 - [Locking](#locking)
 - [Intermediate roles](#intermediate-roles)
@@ -49,7 +49,7 @@ Developing pg-sync-roles
  
  Other types of privileges and other object types may be added in future versions.
 
-> [!IMPORTANT]  
+> [!WARNING]
 > pg-sync-roles does not revoke any permissions granted to the PUBLIC pseudo-role
 
 
@@ -62,95 +62,169 @@ pip install pg-sync-roles psycopg
 ```
 
 
-## Usage
+## Usage examples
 
-> [!WARNING]
-> pg-sync-roles should not be used on roles that should have permissions to multiple database in a cluster (although this limitation may be removed in future versions).
+The core function of pg-sync-roles is the `sync_roles` function: it is used to manage what a single role is able to do and its memberships of other roles. To use this function, you must have a PostgreSQL database. To quickly set one up locally to test the following examples, you can run:
 
-To give a role the ability to login (with a random password valid for 28 days), CONNECT to a database, and membership of another role:
+```bash
+docker run --rm -it -e POSTGRES_HOST_AUTH_METHOD=trust -p 5432:5432 postgres
+```
+
+- [Login and CONNECT to a database](#login-and-connect-to-a-database)
+- [SELECT on a table and USAGE on its schema](#select-on-a-table-and-usage-on-its-schema)
+- [OWNERship, USAGE, and CREATE on a schema](#select-on-a-table-and-usage-on-its-schema)
+- [Membership of other roles](#membership-of-other-roles)
+- [Hierarchy of roles](#hierarchy-of-roles)
+
+### Login and CONNECT to a database
+
+To give a role the ability to login (making the role more of a user) with a random password valid for 28 days and the ability to CONNECT to a database:
 
 ```python
 import string
 import secrets
 from datetime import datetime, timedelta, timezone
-from pg_sync_roles import Login, DatabaseConnect, RoleMembership, sync_roles
-
-# For example purposes, PostgreSQL can be run locally using this...
-# docker run --rm -it -e POSTGRES_HOST_AUTH_METHOD=trust -p 5432:5432 postgres
-
-# ... which should work with this engine
-engine = sa.create_engine('postgresql+psycopg://postgres@127.0.0.1:5432/')
+from pg_sync_roles import *
 
 password_alphabet = string.ascii_letters + string.digits
 password = ''.join(secrets.choice(password_alphabet) for i in range(64))
-
 valid_until = datetime.now(timezone.utc) + timedelta(days=28)
 
-with engine.connect() as conn:
+with sa.create_engine('postgresql+psycopg://postgres@127.0.0.1:5432/').connect() as conn:
     sync_roles(
         conn,
-        'my_user_name',
+        'my_user',
         grants=(
             Login(password=password, valid_until=valid_until),
-            DatabaseConnect('my_database_name'),
-            RoleMembership('my_role_name'),
+            DatabaseConnect('my_database'),
         ),
     )
 ```
 
-Or to give a role SELECT on a table, USAGE on its schema, membersip of a role, and OWNERship+USAGE+CREATE of another schema:
+> [!WARNING]
+> pg-sync-roles should not be used on roles that should have permissions to multiple database in a cluster (although this limitation may be removed in future versions).
+
+### SELECT on a table and USAGE on its schema 
+
+To give a role SELECT on a table, USAGE on its schema using [intermediate roles](#intermediate-roles):
 
 ```python
-from pg_sync_roles import (
-    RoleMembership,
-    SchemaUsage,
-    SchemaCreate,
-    SchemaOwnership,
-    TableSelect,
-    sync_roles,
-)
+import sqlalchemy as sa
+from pg_sync_roles import *
 
-engine = sa.create_engine('postgresql+psycopg://postgres@127.0.0.1:5432/')
-
-with engine.connect() as conn:
+with sa.create_engine('postgresql+psycopg://postgres@127.0.0.1:5432/').connect() as conn:
     sync_roles(
         conn,
-        'my_role_name',
+        'my_role',
         grants=(
             SchemaUsage('my_schema'),
             TableSelect('my_schema', 'my_table'),
-            SchemaOwnership('my_other_schema'),
-            SchemaUsage('my_other_schema'),
-            SchemaCreate('my_other_schema'),
+        ),
+    )
+```
+
+Or to do the same thing but _without_ using [intermediate roles](#intermediate-roles):
+
+```python
+import sqlalchemy as sa
+from pg_sync_roles import *
+
+with sa.create_engine('postgresql+psycopg://postgres@127.0.0.1:5432/').connect() as conn:
+    sync_roles(
+        conn,
+        'my_role',
+        grants=(
+            SchemaUsage('my_schema', direct=True),
+            TableSelect('my_schema', 'my_table', direct=True),
+        ),
+    )
+```
+
+Avoiding intermediate roles can be useful to avoid performance problems on connection when the connecting user has a high number of role memberships when dealing with thousands of tables and thousands of users. Because `direct=True` adds the role to the ACL on the underlying database object, it is subject to the de-facto limit on how many roles can be granted access on an object, and so you should not do this with more than ~1000 roles granted permissions on a single object.
+
+### OWNERship, USAGE, and CREATE on a schema
+
+To give a role OWNERship, USAGE, and CREATE on a schema:
+
+```python
+
+import sqlalchemy as sa
+from pg_sync_roles import *
+
+with sa.create_engine('postgresql+psycopg://postgres@127.0.0.1:5432/').connect() as conn:
+    sync_roles(
+        conn,
+        'my_role',
+        grants=(
+            SchemaOwnership('my_schema'),
+            SchemaUsage('my_schema'),
+            SchemaCreate('my_schema'),
+        ),
+    )
+```
+
+### Membership of other roles
+
+To give a role membership of another role:
+
+```python
+import sqlalchemy as sa
+from pg_sync_roles import *
+
+with sa.create_engine('postgresql+psycopg://postgres@127.0.0.1:5432/').connect() as conn:
+    sync_roles(
+        conn,
+        'my_role',
+        grants=(
             RoleMembership('my_other_role'),
         ),
     )
 ```
 
-Or to give a role USAGE on its schema, and SELECT on two tables _without_ creating intermediate roles:
+### Hierarchy of roles
+
+A hierarchy/tree of roles can be managed with multiple calls to sync_roles:
 
 ```python
-from pg_sync_roles import (
-    SchemaUsage,
-    TableSelect,
-    sync_roles,
-)
+import sqlalchemy as sa
+from pg_sync_roles import *
 
-engine = sa.create_engine('postgresql+psycopg://postgres@127.0.0.1:5432/')
-
-with engine.connect() as conn:
+with sa.create_engine('postgresql+psycopg://postgres@127.0.0.1:5432/').connect() as conn:
     sync_roles(
         conn,
-        'my_role_name',
+        'my_user',
         grants=(
-            SchemaUsage('my_schema', direct=True),
-            TableSelect('my_schema', 'my_table', direct=True),
-            TableSelect('my_schema', 'my_other_table', direct=True),
+            Login(password=password, valid_until=valid_until),
+            DatabaseConnect('my_database'),
+            RoleMembership('my_role'),
+        ),
+    )
+    sync_roles(
+        conn,
+        'my_role',
+        grants=(
+            SchemaOwnership('my_personal_schema'),
+            SchemaUsage('my_personal_schema'),
+            SchemaCreate('my_personal_schema'),
+            SchemaUsage('a_schema'),
+            TableSelect('a_schema', 'a_table'),
+            RoleMembership('a_shared_role'),
+        ),
+    )
+    sync_roles(
+        conn,
+        'a_shared_role',
+        grants=(
+            SchemaOwnership('a_shared_writable_schema'),
+            SchemaUsage('a_shared_writable_schema'),
+            SchemaCreate('a_shared_writable_schema'),
+            SchemaUsage('a_shared_readable_schema', direct=True),
+            TableSelect('a_shared_readable_schema', 'a_table', direct=True),
         ),
     )
 ```
 
-This can be useful to avoid performance problems due to the high numbers of roles/role memberships when dealing with thousands of tables and thousands of users: permissions can be granted to a low number of roles that are shared, and users granted memberships of these roles.
+A more [complex example of using multiple calls to `sync_roles` can be found in the data-workspace-frontend codebase](https://github.com/uktrade/data-workspace-frontend/blob/cf50cf0cecfa79cdf0fad356ed71cc293662b0c4/dataworkspace/dataworkspace/apps/core/utils.py#L153).
 
 
 ## API
