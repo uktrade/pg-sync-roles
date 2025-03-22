@@ -620,13 +620,16 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
             tuple(perm[1] for perm in acl_schema_permissions_to_grant) + \
             schema_usage_roles_to_create + \
             tuple(schema_name for schema_name, table_name in tables_needing_ownerships)
-
-        # ... and temporarily grant the current user them
         database_owners = get_owners('pg_database', 'datdba', 'datname', databases_needing_ownerships)
         schema_owners = get_owners('pg_namespace', 'nspowner', 'nspname', schemas_needing_ownership)
         table_owners = get_owners_in_schema('pg_class', 'relowner', 'relnamespace', 'relname', tables_needing_ownerships)
-        owners_to_grant = tuple(({(role_name,)} | set(database_owners) | set(schema_owners) | set(table_owners)) - {(current_user,)})
-        with temporary_grant_of(owners_to_grant):
+
+        # ... and the main role we're dealing with if necessary (only needed if giving ownership)
+        role_if_needed = {(role_name,)} if schema_ownerships_to_grant else set()
+
+        # ... and temporarily grant the current user them
+        roles_to_grant = tuple((role_if_needed | set(schema_owners) | set(table_owners)) - {(current_user,)})
+        with temporary_grant_of(roles_to_grant):
 
             # Grant or revoke schema ownerships
             for schema_ownership in schema_ownerships_to_revoke:
