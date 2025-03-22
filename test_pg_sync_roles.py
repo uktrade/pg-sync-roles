@@ -232,6 +232,8 @@ def test_initial_grant_takes_lock(test_engine, grants):
             conn.execute(sa.text('SELECT pg_advisory_xact_lock(1)'))
             got_lock.set()
             for _ in range(0, 50):
+                if num_blocked:
+                    continue
                 # We don't use pg_blocking_pids because sometimes, especially in CI, it seems
                 # to repeatedly return nothing, even if we're pretty sure something is blocked
                 num_blocked = conn.execute(sa.text('''
@@ -239,8 +241,6 @@ def test_initial_grant_takes_lock(test_engine, grants):
                     FROM pg_locks
                     WHERE locktype = 'advisory' AND granted = FALSE
                 ''')).fetchall()[0][0]
-                if num_blocked:
-                    break
                 time.sleep(0.2)
 
     t = threading.Thread(target=take_lock)
