@@ -12,13 +12,18 @@ pg-sync-roles should not be used on roles that should have permissions to multip
 
 ### Contents
 
+Using pg-sync-rples
+
 - [Features](#features)
 - [Installation](#installation)
 - [Usage](#usage)
 - [API](#api)
 - [Locking](#locking)
-- [Under the hood](#under-the-hood)
+- [Intermediate roles](#intermediate-roles)
 - [Compatibility](#compatibility)
+
+Developing pg-sync-roles
+
 - [Running tests locally](#running-tests-locally)
 - [Design decisions](#design-decisions)
 
@@ -214,7 +219,7 @@ If you have other processes changing permissions outide of the `sync_roles` func
 The advisory lock is only obtained if `sync_roles` detects there are changes to be made, and is released by the time it returns.
 
 
-## Under the hood
+## Intermediate roles
 
 The default behaviour for pg-sync-roles is to maintain a role per database permission, a role per schema permission, and a role per table permission. Rather than roles being granted permissions directly on objects, membership is granted to these roles that indirectly grant permissions on objects. This means that from the object's point of view, only 1 role has any given permission. This works around the de-facto limit on the number of roles that can have permission to any object.
 
@@ -235,6 +240,9 @@ pg-sync-roles aims to be compatible with a wide range of Python and other depend
 Note that SQLAlchemy < 2 does not support Psycopg 3, and for SQLAlchemy < 2 `future=True` must be passed to its create_engine function.
 
 There are no plans to drop support for any of the above.
+
+
+---
 
 
 ## Running tests locally
