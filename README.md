@@ -1,12 +1,13 @@
 # pg-sync-roles [![PyPI package](https://img.shields.io/pypi/v/pg-sync-roles?label=PyPI%20package)](https://pypi.org/project/pg-sync-roles/) [![Test suite](https://img.shields.io/github/actions/workflow/status/uktrade/pg-sync-roles/test.yaml?label=Test%20suite)](https://github.com/uktrade/pg-sync-roles/actions/workflows/test.yaml) [![Code coverage](https://img.shields.io/codecov/c/github/uktrade/pg-sync-roles?label=Code%20coverage)](https://app.codecov.io/gh/uktrade/pg-sync-roles)
 
-Python utility function to ensure that a PostgreSQL role has certain permissions or role memberships, and no others. While pg-sync-roles removes the need of a lot of the boilerplate in order to manage permissions, it is a light abstraction layer over the PostgreSQL permission system. Therefore to use pg-sync-roles effectively and securely, you should have knowledge of:
+Python utility functions to ensure that PostgreSQL roles has certain privileges on database objects or memberships of other roles - useful to periodically synchronise PostgreSQL's role and privilege system with an external store.
 
-- [PostgreSQL privileges](https://www.postgresql.org/docs/current/ddl-priv.html)
-- [PostgreSQL role attributes](https://www.postgresql.org/docs/current/role-attributes.html)
-- [PostgreSQL database roles](https://www.postgresql.org/docs/current/user-manag.html)
-
-pg-sync-roles should not be used on roles that should have permissions to multiple database in a cluster (although this limitation may be removed in future versions).
+> [!IMPORTANT]
+> While pg-sync-roles removes the need of a lot of the boilerplate in order to manage permissions, it is a light abstraction layer over the PostgreSQL permission system. Therefore to use pg-sync-roles effectively and securely, you should have knowledge of:
+>
+> - [PostgreSQL privileges](https://www.postgresql.org/docs/current/ddl-priv.html)
+> - [PostgreSQL role attributes](https://www.postgresql.org/docs/current/role-attributes.html)
+> - [PostgreSQL database roles](https://www.postgresql.org/docs/current/user-manag.html)
 
 ---
 
@@ -62,6 +63,9 @@ pip install pg-sync-roles psycopg
 
 
 ## Usage
+
+> [!WARNING]
+> pg-sync-roles should not be used on roles that should have permissions to multiple database in a cluster (although this limitation may be removed in future versions).
 
 To give a role the ability to login (with a random password valid for 28 days), CONNECT to a database, and membership of another role:
 
