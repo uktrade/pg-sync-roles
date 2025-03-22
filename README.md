@@ -248,6 +248,7 @@ There are no plans to drop support for any of the above.
 
 ---
 
+The following sections aren't needed to use pg-sync-roles; they are more for developers of pg-sync-roles itself.
 
 ## Running tests locally
 
@@ -259,8 +260,6 @@ pytest
 
 
 ## Design decisions
-
-This information isn't needed to use pg-sync-roles, it's more for developers of pg-sync-roles itself.
 
 ### Existence of this project
 
