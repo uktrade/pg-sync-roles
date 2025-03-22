@@ -27,6 +27,7 @@ Developing pg-sync-roles
 
 - [Running tests locally](#running-tests-locally)
 - [Testing strategy](#testing-strategy)
+- [Mitigating SQL injection risks](#mitigating-sql-injection-risks)
 - [Internal flow](#internal-flow)
 - [Design decisions](#design-decisions)
 
@@ -341,6 +342,23 @@ pytest
 Wherever possible tests are high-level integration tests, connecting to a real database and asserting on whether or not a role has permissions to take actions in the database, and running tests on multiple versions of PostgreSQL. Assertions on lower level behaviours, such as what queries are issues to the database during execution, are avoided because the they won't give the same guarentees on what users/roles have permissions to do. Mocking is avoided for similar reasons: it introduces assumptions.
 
 A high level of code coverage (100% or close to 100%) is desired, but it is not sufficient. "Test around" any feature, adding a variety of cases, and especially making sure that access can be _removed_, not just granted.
+
+
+## Mitigating SQL injection risks
+
+> [!CAUTION]
+> If you don't follow the instructions in this section you risk introducing vulnerabilities
+
+ORM-like features are not used in pg-sync-roles, but instead queries are constructed directly. This gives flexibility, especially around optimisation, but introduces risks of SQL injection. This is even higher than in typical web applications because dynamic SQL is used heavily: dynamic in the sense that not only literals come from input, but identifiers and keywords as well.
+
+To migitate this risk:
+
+1. Queries must be constructed using psycopg's [sql.SQL](https://www.psycopg.org/psycopg3/docs/api/sql.html)
+2. Literals from input must be escaped with [sql.Literal](https://www.psycopg.org/psycopg3/docs/api/sql.html#psycopg.sql.SQL)
+3. Identifiers from input must be escaped with [sql.Identifier](https://www.psycopg.org/psycopg3/docs/api/sql.html#psycopg.sql.Identifier)
+4. Keywords from input must be chosen from a safe-list of hard-coded [sql.SQL](https://www.psycopg.org/psycopg3/docs/api/sql.html) instances
+
+For the avoidance of doubt, "input" covers anything that isn't hard-coded, and specifically covers both values passed into functions and values retrieved from the database.
 
 
 ## Internal flow
