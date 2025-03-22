@@ -26,6 +26,7 @@ Using pg-sync-rples
 Developing pg-sync-roles
 
 - [Running tests locally](#running-tests-locally)
+- [Testing strategy](#testing-strategy)
 - [Design decisions](#design-decisions)
 
 ---
@@ -324,6 +325,7 @@ There are no plans to drop support for any of the above.
 
 The following sections aren't needed to use pg-sync-roles; they are more for developers of pg-sync-roles itself.
 
+
 ## Running tests locally
 
 ```bash
@@ -331,6 +333,13 @@ python -m pip install psycopg -e ".[dev]"  # Only needed once
 ./start-services.sh                        # Only needed once
 pytest
 ```
+
+
+## Testing strategy
+
+Wherever possible tests are high-level integration tests, connecting to a real database and asserting on whether or not a role has permissions to take actions in the database, and running tests on multiple versions of PostgreSQL. Assertions on lower level behaviours, such as what queries are issues to the database during execution, are avoided because the they won't give the same guarentees on what users/roles have permissions to do. Mocking is avoided for similar reasons: it introduces assumptions.
+
+A high level of code coverage (100% or close to 100%) is desired, but it is not sufficient. "Test around" any feature, adding a variety of cases, and especially making sure that access can be _removed_, not just granted.
 
 
 ## Design decisions
