@@ -661,6 +661,26 @@ def test_table_direct_usage_does_not_increase_roles(test_engine, test_table):
     assert num_roles_before == num_roles_after
 
 
+def test_schema_create_direct_does_not_increase_roles(test_engine, test_table):
+    schema_name, table_name = test_table
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=())
+
+    with test_engine.connect() as conn:
+        num_roles_before = conn.execute(sa.text(f"SELECT count(*) FROM pg_roles")).fetchall()[0][0]
+
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            SchemaCreate(schema_name, direct=True),
+        ))
+
+        num_roles_after = conn.execute(sa.text(f"SELECT count(*) FROM pg_roles")).fetchall()[0][0]
+
+    assert num_roles_before == num_roles_after
+
+
 @pytest.mark.parametrize('schema_usage_direct', (False, True))
 @pytest.mark.parametrize('table_select_direct', (False, True))
 def test_table_select_never_granted_cannot_query(test_engine, test_table, schema_usage_direct, table_select_direct):
@@ -1246,7 +1266,8 @@ def test_direct_usage_permission_is_revoked(test_engine, test_sequence):
             assert conn.execute(sa.text(f"SELECT nextval('{schema_name}.{sequence_name}');")).fetchall()[0][0] == 0
 
 
-def test_schema_create_roles_can_create_table(test_engine, test_sequence):
+@pytest.mark.parametrize('direct', (False, True))
+def test_schema_create_roles_can_create_table(test_engine, test_sequence, direct):
     schema_name, _ = test_sequence
     table_name = 'test_table_' + uuid.uuid4().hex
     role_name = get_test_role()
@@ -1255,7 +1276,7 @@ def test_schema_create_roles_can_create_table(test_engine, test_sequence):
         sync_roles(conn, role_name, grants=(
             Login(valid_until=valid_until, password='password'),
             DatabaseConnect(TEST_DATABASE_NAME),
-            SchemaCreate(schema_name),
+            SchemaCreate(schema_name, direct=direct),
         ))
 
     engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
@@ -1263,8 +1284,9 @@ def test_schema_create_roles_can_create_table(test_engine, test_sequence):
         conn.execute(sa.text(f'CREATE TABLE {schema_name}.{table_name} (id int)'))
 
 
-@pytest.mark.parametrize('direct', (False, True))
-def test_schema_create_roles_can_create_view(test_engine, test_table, direct):
+@pytest.mark.parametrize('schema_usage_direct', (False, True))
+@pytest.mark.parametrize('schema_create_direct', (False, True))
+def test_schema_create_roles_can_create_view(test_engine, test_table, schema_usage_direct, schema_create_direct):
     schema_name, table_name = test_table
     view_name = 'test_view_' + uuid.uuid4().hex
     role_name = get_test_role()
@@ -1273,8 +1295,8 @@ def test_schema_create_roles_can_create_view(test_engine, test_table, direct):
         sync_roles(conn, role_name, grants=(
             Login(valid_until=valid_until, password='password'),
             DatabaseConnect(TEST_DATABASE_NAME),
-            SchemaUsage(schema_name, direct=direct),
-            SchemaCreate(schema_name),
+            SchemaUsage(schema_name, direct=schema_usage_direct),
+            SchemaCreate(schema_name, direct=schema_create_direct),
         ))
 
     engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
@@ -1282,7 +1304,8 @@ def test_schema_create_roles_can_create_view(test_engine, test_table, direct):
         conn.execute(sa.text(f'CREATE VIEW {schema_name}.{view_name} AS SELECT * FROM {schema_name}.{table_name}'))
 
 
-def test_schema_create_roles_can_create_sequence(test_engine, test_view):
+@pytest.mark.parametrize('direct', (False, True))
+def test_schema_create_roles_can_create_sequence(test_engine, test_view, direct):
     schema_name, _ = test_view
     sequence_name = 'test_sequence_' + uuid.uuid4().hex
     role_name = get_test_role()
@@ -1291,7 +1314,7 @@ def test_schema_create_roles_can_create_sequence(test_engine, test_view):
         sync_roles(conn, role_name, grants=(
             Login(valid_until=valid_until, password='password'),
             DatabaseConnect(TEST_DATABASE_NAME),
-            SchemaCreate(schema_name),
+            SchemaCreate(schema_name, direct=direct),
         ))
 
     engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
@@ -1299,8 +1322,9 @@ def test_schema_create_roles_can_create_sequence(test_engine, test_view):
         conn.execute(sa.text(f'CREATE SEQUENCE {schema_name}.{sequence_name} START 101;'))
 
 
-@pytest.mark.parametrize('direct', (False, True))
-def test_can_use_schema_if_just_created(test_engine, direct):
+@pytest.mark.parametrize('schema_usage_direct', (False, True))
+@pytest.mark.parametrize('schema_create_direct', (False, True))
+def test_can_use_schema_if_just_created(test_engine, schema_usage_direct, schema_create_direct):
     role_name = get_test_role()
     schema_name = role_name
 
@@ -1310,8 +1334,8 @@ def test_can_use_schema_if_just_created(test_engine, direct):
             Login(valid_until=valid_until, password='password'),
             DatabaseConnect(TEST_DATABASE_NAME),
             SchemaOwnership(schema_name),
-            SchemaUsage(schema_name, direct=direct),
-            SchemaCreate(schema_name),
+            SchemaUsage(schema_name, direct=schema_usage_direct),
+            SchemaCreate(schema_name, direct=schema_create_direct),
         ))
 
     role_engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
@@ -1324,8 +1348,9 @@ def test_can_use_schema_if_just_created(test_engine, direct):
         assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{new_table_name}")).fetchall()[0][0] == 0
 
 
-@pytest.mark.parametrize('direct', (False, True))
-def test_team_role_privileges_are_preserved(test_engine, direct):
+@pytest.mark.parametrize('schema_usage_direct', (False, True))
+@pytest.mark.parametrize('schema_create_direct', (False, True))
+def test_team_role_privileges_are_preserved(test_engine, schema_usage_direct, schema_create_direct):
     # Tries to emulate a feature of Data Workspace https://github.com/uktrade/data-workspace-frontend,
     # where users have membership of "team roles" with associated team schemas. The team schemas
     # have default privileges that should grant the team role all privileges on new tables within
@@ -1347,8 +1372,8 @@ def test_team_role_privileges_are_preserved(test_engine, direct):
             ))
             sync_roles(conn, team_role_name, preserve_existing_grants_in_schemas=(team_schema_name,), grants=(
                 SchemaOwnership(team_schema_name),
-                SchemaUsage(team_schema_name, direct=direct),
-                SchemaCreate(team_schema_name),
+                SchemaUsage(team_schema_name, direct=schema_usage_direct),
+                SchemaCreate(team_schema_name, direct=schema_create_direct),
             ))
             conn.execute(sa.text(f'''
                 GRANT "{role_name}", "{team_schema_name}" TO CURRENT_USER
