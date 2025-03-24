@@ -267,7 +267,7 @@ A more [complex example of using multiple calls to `sync_roles` can be found in 
 
 #### `SchemaUsage(schema_name, direct=False)`
 
-#### `SchemaCreate(schema_name)`
+#### `SchemaCreate(schema_name, direct=False)`
 
 #### `TableSelect(schema_name, table_name, direct=False)`
 
@@ -304,7 +304,7 @@ The advisory lock is only obtained if `sync_roles` detects there are changes to 
 
 The default behaviour for pg-sync-roles is to maintain a role per database permission, a role per schema permission, and a role per table permission. Rather than roles being granted permissions directly on objects, membership is granted to these roles that indirectly grant permissions on objects. This means that from the object's point of view, only 1 role has any given permission. This works around the de-facto limit on the number of roles that can have permission to any object.
 
-If the `TableSelect` and `SchemaUsage` grant types are constructed with `direct=True`, then the role is granted permission directly on the object without use of an intermediate role. This can be useful to minimise the number of role memberships; in some cases [a high number of role memberships can result in the connecting user taking an extremely long time to connect to the database](https://www.postgresql.org/message-id/CAJe2WWhxzbt_uszVYnyfw4Y%2BOdeHXdue0GD%2BOd5uk15XD_FL5w%40mail.gmail.com).
+If the `TableSelect`, `SchemaUsage` or `SchemaCreate` grant types are constructed with `direct=True`, then the role is granted permission directly on the object without use of an intermediate role. This can be useful to minimise the number of role memberships; in some cases [a high number of role memberships can result in the connecting user taking an extremely long time to connect to the database](https://www.postgresql.org/message-id/CAJe2WWhxzbt_uszVYnyfw4Y%2BOdeHXdue0GD%2BOd5uk15XD_FL5w%40mail.gmail.com).
 
 The names of the roles maintained by pg-sync-roles begin with the prefix `_pgsr_`. Each name ends with a randomly generated unique identifier.
 
@@ -410,7 +410,7 @@ Also having high numbers of grantees on each object makes full table scans on th
 
 ### Avoiding usage of intermediate roles for some cases
 
-For table SELECT and schema USAGE, the grant types support a `direct=True` mode that avoids the intermediate roles. This is because we had a system where for users with high numbers of intermediate roles, two to three thousand, "sometimes" it would take > 90 seconds to initiate a connection to the database, while users with low numbers of roles would consistently connect almost instantly.
+For table SELECT, schema USAGE, and schema CREATE, the grant types support a `direct=True` mode that avoids the intermediate roles. This is because we had a system where for users with high numbers of intermediate roles, two to three thousand, "sometimes" it would take > 90 seconds to initiate a connection to the database, while users with low numbers of roles would consistently connect almost instantly.
 
 The reasons for this was never discovered, and exactly what "sometimes" was never pinned down — although calling CREATE ROLE seemed to be highly corrolated with subsequent slow connection times. However, since this setup had thousands of roles and _millions_ of rows in `pg_auth_members`, it felt like a situation that PostgreSQL was not designed for. By judicious use of `direct=True`, we could reduce the amount of role memberships for users by 1-2 orders of magnitude.
 

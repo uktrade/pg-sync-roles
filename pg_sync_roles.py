@@ -67,6 +67,7 @@ class SchemaUsage:
 @dataclass(frozen=True)
 class SchemaCreate:
     schema_name: str
+    direct: bool = False
 
 
 @dataclass(frozen=True)
@@ -412,7 +413,8 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
     database_connects = tuple(grant for grant in grants if isinstance(grant, DatabaseConnect))
     schema_usages_indirect = tuple(grant for grant in grants if isinstance(grant, SchemaUsage) and not grant.direct)
     schema_usages_direct = tuple(grant for grant in grants if isinstance(grant, SchemaUsage) and grant.direct)
-    schema_creates = tuple(grant for grant in grants if isinstance(grant, SchemaCreate))
+    schema_creates_indirect = tuple(grant for grant in grants if isinstance(grant, SchemaCreate) and not grant.direct)
+    schema_creates_direct = tuple(grant for grant in grants if isinstance(grant, SchemaCreate) and grant.direct)
     schema_ownerships = tuple(grant for grant in grants if isinstance(grant, SchemaOwnership))
     table_selects_indirect = tuple(grant for grant in grants if isinstance(grant, TableSelect) and not grant.direct)
     table_selects_direct = tuple(grant for grant in grants if isinstance(grant, TableSelect) and grant.direct)
@@ -443,12 +445,13 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         schema_ownerships_names = set(schema_ownership.schema_name for schema_ownership in schema_ownerships)
         schema_usages_indirect = tuple(schema_usage for schema_usage in schema_usages_indirect if (schema_usage.schema_name,) in schemas_that_exist or schema_usage.schema_name in schema_ownerships_names)
         schema_usages_direct = tuple(schema_usage for schema_usage in schema_usages_direct if (schema_usage.schema_name,) in schemas_that_exist or schema_usage.schema_name in schema_ownerships_names)
-        schema_creates = tuple(schema_create for schema_create in schema_creates if (schema_create.schema_name,) in schemas_that_exist or schema_create.schema_name in schema_ownerships_names)
+        schema_creates_indirect = tuple(schema_create for schema_create in schema_creates_indirect if (schema_create.schema_name,) in schemas_that_exist or schema_create.schema_name in schema_ownerships_names)
+        schema_creates_direct = tuple(schema_create for schema_create in schema_creates_direct if (schema_create.schema_name,) in schemas_that_exist or schema_create.schema_name in schema_ownerships_names)
         table_selects_indirect = tuple(table_select for table_select in table_selects_indirect if (table_select.schema_name, table_select.table_name) in tables_that_exist)
         table_selects_direct = tuple(table_select for table_select in table_selects_direct if (table_select.schema_name, table_select.table_name) in tables_that_exist)
         all_database_connect_names = tuple(grant.database_name for grant in database_connects)
         all_schema_usage_indirect_names = tuple(grant.schema_name for grant in schema_usages_indirect)
-        all_schema_create_names = tuple(grant.schema_name for grant in schema_creates)
+        all_schema_create_indirect_names = tuple(grant.schema_name for grant in schema_creates_indirect)
         all_table_select_indirect_names = tuple((grant.schema_name, grant.table_name) for grant in table_selects_indirect)
 
         # Find if we need to make the role
@@ -468,10 +471,12 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         # Real ACL permissions on schemas
         acl_schema_permissions_tuples = tuple((row['privilege_type'], row['name_1']) for row in get_acl_rows(existing_permissions, _SCHEMA))
         acl_schema_permissions_set = set(acl_schema_permissions_tuples)
-        schema_usages_direct_tuples = tuple(('USAGE', schema_usage.schema_name) for schema_usage in schema_usages_direct)
-        schema_usages_direct_set = set(schema_usages_direct_tuples)
-        acl_schema_permissions_to_revoke = tuple(row for row in acl_schema_permissions_tuples if row not in schema_usages_direct_set)
-        acl_schema_permissions_to_grant = tuple(row for row in schema_usages_direct_tuples if row not in acl_schema_permissions_set)
+        schema_direct_tuples = \
+            tuple(('USAGE', schema_usage.schema_name) for schema_usage in schema_usages_direct) + \
+            tuple(('CREATE', schema_usage.schema_name) for schema_usage in schema_creates_direct)
+        schema_direct_set = set(schema_direct_tuples)
+        acl_schema_permissions_to_revoke = tuple(row for row in acl_schema_permissions_tuples if row not in schema_direct_tuples)
+        acl_schema_permissions_to_grant = tuple(row for row in schema_direct_tuples if row not in acl_schema_permissions_set)
 
         # And the ACL-equivalent roles
         database_connect_roles = get_acl_roles(
@@ -485,7 +490,7 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         schema_usage_roles_to_create = keys_with_none_value(schema_usage_roles)
         schema_create_roles = get_acl_roles(
             'CREATE', 'pg_namespace', 'nspname', 'nspacl', f'\\_pgsr\\_local\\_{db_oid}_\\schema\\_create\\_%',
-            all_schema_create_names)
+            all_schema_create_indirect_names)
         schema_create_roles_to_create = keys_with_none_value(schema_create_roles)
 
         table_select_roles = get_acl_roles_in_schema(
@@ -576,10 +581,12 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         # Real ACL permissions on schemas
         acl_schema_permissions_tuples = tuple((row['privilege_type'], row['name_1']) for row in get_acl_rows(existing_permissions, _SCHEMA))
         acl_schema_permissions_set = set(acl_schema_permissions_tuples)
-        schema_usages_direct_tuples = tuple(('USAGE', schema_usage.schema_name) for schema_usage in schema_usages_direct)
-        schema_usages_direct_set = set(schema_usages_direct_tuples)
-        acl_schema_permissions_to_revoke = tuple(row for row in acl_schema_permissions_tuples if row not in schema_usages_direct_set)
-        acl_schema_permissions_to_grant = tuple(row for row in schema_usages_direct_tuples if row not in acl_schema_permissions_set)
+        schema_direct_tuples = \
+            tuple(('USAGE', schema_usage.schema_name) for schema_usage in schema_usages_direct) + \
+            tuple(('CREATE', schema_usage.schema_name) for schema_usage in schema_creates_direct)
+        schema_direct_set = set(schema_direct_tuples)
+        acl_schema_permissions_to_revoke = tuple(row for row in acl_schema_permissions_tuples if row not in schema_direct_tuples)
+        acl_schema_permissions_to_grant = tuple(row for row in schema_direct_tuples if row not in acl_schema_permissions_set)
 
         # Gather all changes to be made to objects - the current user must be owner of them
         schema_ownerships_that_exist = tuple(SchemaOwnership(perm['name_1']) for perm in existing_permissions if perm['on'] == 'schema' and perm['privilege_type'] == 'OWNER')
@@ -593,10 +600,9 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
             'USAGE', 'pg_namespace', 'nspname', 'nspacl', f'\\_pgsr\\_local\\_{db_oid}_\\schema\\_usage\\_%',
             all_schema_usage_indirect_names)
         schema_usage_roles_to_create = keys_with_none_value(schema_usage_roles)
-
         schema_create_roles = get_acl_roles(
             'CREATE', 'pg_namespace', 'nspname', 'nspacl', f'\\_pgsr\\_local\\_{db_oid}_\\schema\\_create\\_%',
-            all_schema_create_names)
+            all_schema_create_indirect_names)
         schema_create_roles_to_create = keys_with_none_value(schema_create_roles)
         table_select_roles = get_acl_roles_in_schema(
             'SELECT', 'pg_class', 'relname', 'relacl', 'relnamespace', f'\\_pgsr\\_local\\_{db_oid}_\\table\\_select\\_%',
@@ -681,10 +687,12 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
             # Real ACL permissions on schemas
             acl_schema_permissions_tuples = tuple((row['privilege_type'], row['name_1']) for row in get_acl_rows(existing_permissions, _SCHEMA))
             acl_schema_permissions_set = set(acl_schema_permissions_tuples)
-            schema_usages_direct_tuples = tuple(('USAGE', schema_usage.schema_name) for schema_usage in schema_usages_direct)
-            schema_usages_direct_set = set(schema_usages_direct_tuples)
-            acl_schema_permissions_to_revoke = tuple(row for row in acl_schema_permissions_tuples if row not in schema_usages_direct_set)
-            acl_schema_permissions_to_grant = tuple(row for row in schema_usages_direct_tuples if row not in acl_schema_permissions_set)
+            schema_direct_tuples = \
+                tuple(('USAGE', schema_usage.schema_name) for schema_usage in schema_usages_direct) + \
+                tuple(('CREATE', schema_usage.schema_name) for schema_usage in schema_creates_direct)
+            schema_direct_set = set(schema_direct_tuples)
+            acl_schema_permissions_to_revoke = tuple(row for row in acl_schema_permissions_tuples if row not in schema_direct_tuples)
+            acl_schema_permissions_to_grant = tuple(row for row in schema_direct_tuples if row not in acl_schema_permissions_set)
 
             # Revoke direct permissions on tables and schemas
             for perm in acl_table_permissions_to_revoke:
