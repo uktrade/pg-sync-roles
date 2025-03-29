@@ -442,7 +442,7 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         # Find existing databases and schemas
         database_connects = tuple(grant for grant in grants if isinstance(grant, DatabaseConnect))
         all_database_names = tuple(grant.database_name for grant in database_connects)
-        all_schema_names = tuple(grant.schema_name for grant in grants if isinstance(grant, (SchemaUsage, SchemaCreate, SchemaOwnership)))
+        all_schema_names = tuple(grant.schema_name for grant in grants if isinstance(grant, (SchemaUsage, SchemaCreate, SchemaOwnership, TableSelect)))
         databases_that_exist = set(get_existing('pg_database', 'datname', all_database_names))
         schemas_that_exist = set(get_existing('pg_namespace', 'nspname', all_schema_names))
 
