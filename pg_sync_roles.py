@@ -594,11 +594,6 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         # we need to check if the current use is the owner, and grant the owner to the user if not
         current_user = execute_sql(sql.SQL('SELECT CURRENT_USER')).fetchall()[0][0]
 
-        # Find existing objects where needed
-        databases_that_exist = set(get_existing('pg_database', 'datname', all_database_names))
-        schemas_that_exist = set(get_existing('pg_namespace', 'nspname', all_schema_names))
-        tables_that_exist = set(get_existing_in_schema('pg_class', 'relnamespace', 'relname', all_table_names))
-
         # Get all existing permissions
         existing_permissions = get_existing_permissions(role_name, preserve_existing_grants_in_schemas)
 
