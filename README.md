@@ -45,10 +45,10 @@ Developing pg-sync-roles
   -  Database CONNECT
   -  Schema USAGE, CREATE, and ownership
   -  Table (and table-like) SELECT
-- Also automatically revokes all non-SELECT permissions on table-like objects, for example INSERT.
+- Automatically revokes all non-SELECT permissions on table-like objects, for example INSERT.
+- Table-like objects for SELECT permissions can be chosen by a regular expression match on their name, for example to choose all tables in a schema or all tables that start with a prefix
 - Allows for contents of specific schemas to be ignored for the purposes of management of permissions
-- Table can be matched by regular expression
- 
+
  These features make pg-sync-roles useful when using PostgreSQL as a data warehouse with a high number of users that need granular permissions. The lack of SUPERUSER requirement means that pg-sync-roles is suitable for managed PostgreSQL clusters, for example in Amazon RDS.
  
  Other types of privileges and other object types may be added in future versions.
