@@ -405,6 +405,12 @@ Following details the main internal behaviour of `sync_roles`. It's not exhausti
 
 ## Design decisions
 
+- [Existence of this project](#existence-of-this-project)
+- [Usage of intermediate roles](#usage-of-intermediate-roles)
+- [Avoiding usage of intermediate roles for some cases](#avoiding-usageo-of-intermediate-roles-for-some-cases)
+- [Structure of the intermediate role names][#structure-of-the-intermediate-role-names]
+- [A declarative API](#a-declarative-api)
+
 ### Existence of this project
 
 It was factored out from https://github.com/uktrade/data-workspace-frontend, mostly from the "new_private_database_credentials" function, which was several hundred lines long and a bit "sprawling" - lots of duplication and it was hard to see what was going on.
@@ -437,7 +443,7 @@ For table SELECT, schema USAGE, and schema CREATE, the grant types support a `di
 The reasons for this was never discovered, and exactly what "sometimes" was never pinned down — although calling CREATE ROLE seemed to be highly corrolated with subsequent slow connection times. However, since this setup had thousands of roles and _millions_ of rows in `pg_auth_members`, it felt like a situation that PostgreSQL was not designed for. By judicious use of `direct=True`, we could reduce the amount of role memberships for users by 1-2 orders of magnitude.
 
 
-### Structure of the role names
+### Structure of the intermediate role names
 
 The role names have a unique identifier in them, but this is _not_ tied to any property of the object they are related to - they are randomly generated. While it maybe makes it a touch harder to see what object each role is for, this makes it fine to move permissions from one object to another, and everything will continue to work as expected. This makes certain ingests easier because they can swap a table with new table, copy all grantees from the old to the new, and everything will continue to work. Also tables can be renamed without any effect on their permissions.
 
