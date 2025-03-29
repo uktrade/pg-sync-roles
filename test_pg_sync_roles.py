@@ -1,4 +1,5 @@
 import functools
+import re
 import threading
 import time
 import uuid
@@ -126,6 +127,25 @@ def test_table(root_engine, test_engine):
     with root_engine.begin() as conn:
         conn.execute(sa.text(f'DROP TABLE IF EXISTS {schema_name}.{table_name}'))
         conn.execute(sa.text(f'DROP SCHEMA IF EXISTS {schema_name}'))
+
+
+@pytest.fixture()
+def create_test_table(root_engine, test_engine):
+    schema_table_names = []
+
+    def _create_test_table(schema_name, table_name):
+        schema_table_names.append((schema_name, table_name))
+
+        with test_engine.begin() as conn:
+            conn.execute(sa.text(f'CREATE SCHEMA IF NOT EXISTS {schema_name}'))
+            conn.execute(sa.text(f'CREATE TABLE {schema_name}.{table_name} (id int)'))
+
+    yield _create_test_table
+
+    with root_engine.begin() as conn:
+        for schema_name, table_name in schema_table_names:
+            conn.execute(sa.text(f'DROP TABLE IF EXISTS {schema_name}.{table_name}'))
+            conn.execute(sa.text(f'DROP SCHEMA IF EXISTS {schema_name}'))
 
 
 @pytest.fixture()
@@ -621,7 +641,8 @@ def test_role_membership_revoked(test_engine):
         assert not is_member(conn, role_name, TEST_BASE_ROLE)
 
 
-def test_table_direct_select_does_not_increase_roles(test_engine, test_table):
+@pytest.mark.parametrize('compile', (lambda str: str, lambda str: re.compile(re.escape(str))))
+def test_table_direct_select_does_not_increase_roles(test_engine, test_table, compile):
     schema_name, table_name = test_table
     role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
@@ -633,7 +654,7 @@ def test_table_direct_select_does_not_increase_roles(test_engine, test_table):
 
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
-            TableSelect(schema_name, table_name, direct=True),
+            TableSelect(schema_name, compile(table_name), direct=True),
         ))
 
         num_roles_after = conn.execute(sa.text(f"SELECT count(*) FROM pg_roles")).fetchall()[0][0]
@@ -681,9 +702,10 @@ def test_schema_create_direct_does_not_increase_roles(test_engine, test_table):
     assert num_roles_before == num_roles_after
 
 
+@pytest.mark.parametrize('compile', (lambda str: str, lambda str: re.compile(re.escape(str))))
 @pytest.mark.parametrize('schema_usage_direct', (False, True))
 @pytest.mark.parametrize('table_select_direct', (False, True))
-def test_table_select_never_granted_cannot_query(test_engine, test_table, schema_usage_direct, table_select_direct):
+def test_table_select_never_granted_cannot_query(test_engine, test_table, compile, schema_usage_direct, table_select_direct):
     schema_name, table_name = test_table
     role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
@@ -692,7 +714,7 @@ def test_table_select_never_granted_cannot_query(test_engine, test_table, schema
             Login(valid_until=valid_until, password='password'),
             DatabaseConnect(TEST_DATABASE_NAME),
             SchemaUsage(schema_name, direct=schema_usage_direct),
-            TableSelect(schema_name, table_name, direct=table_select_direct),
+            TableSelect(schema_name, compile(table_name), direct=table_select_direct),
         ))
         sync_roles(conn, role_name, grants=(
             Login(valid_until=valid_until, password='password'),
@@ -706,9 +728,10 @@ def test_table_select_never_granted_cannot_query(test_engine, test_table, schema
             assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
 
 
+@pytest.mark.parametrize('compile', (lambda str: str, lambda str: re.compile(re.escape(str))))
 @pytest.mark.parametrize('schema_usage_direct', (False, True))
 @pytest.mark.parametrize('table_select_direct', (False, True))
-def test_table_select_granted_then_revoked_cannot_query(test_engine, test_table, schema_usage_direct, table_select_direct):
+def test_table_select_granted_then_revoked_cannot_query(test_engine, test_table, compile, schema_usage_direct, table_select_direct):
     schema_name, table_name = test_table
     role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
@@ -717,7 +740,7 @@ def test_table_select_granted_then_revoked_cannot_query(test_engine, test_table,
             Login(valid_until=valid_until, password='password'),
             DatabaseConnect(TEST_DATABASE_NAME),
             SchemaUsage(schema_name, direct=schema_usage_direct),
-            TableSelect(schema_name, table_name, direct=table_select_direct),
+            TableSelect(schema_name, compile(table_name), direct=table_select_direct),
         ))
         sync_roles(conn, role_name, grants=(
             Login(valid_until=valid_until, password='password'),
@@ -731,8 +754,9 @@ def test_table_select_granted_then_revoked_cannot_query(test_engine, test_table,
             assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
 
 
+@pytest.mark.parametrize('compile', (lambda str: str, lambda str: re.compile(re.escape(str))))
 @pytest.mark.parametrize('direct', (False, True))
-def test_table_select_usage_never_granted_cannot_query(test_engine, test_table, direct):
+def test_table_select_usage_never_granted_cannot_query(test_engine, test_table, compile, direct):
     schema_name, table_name = test_table
     role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
@@ -740,7 +764,7 @@ def test_table_select_usage_never_granted_cannot_query(test_engine, test_table, 
         sync_roles(conn, role_name, grants=(
             Login(valid_until=valid_until, password='password'),
             DatabaseConnect(TEST_DATABASE_NAME),
-            TableSelect(schema_name, table_name, direct=direct),
+            TableSelect(schema_name, compile(table_name), direct=direct),
         ))
 
     engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
@@ -749,9 +773,11 @@ def test_table_select_usage_never_granted_cannot_query(test_engine, test_table, 
             assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
 
 
+@pytest.mark.parametrize('compile_1', (lambda str: str, lambda str: re.compile(re.escape(str))))
+@pytest.mark.parametrize('compile_2', (lambda str: str, lambda str: re.compile(re.escape(str))))
 @pytest.mark.parametrize('schema_usage_direct', (False, True))
 @pytest.mark.parametrize('table_select_direct', (False, True))
-def test_table_select_granted_then_usage_revoked_cannot_query(test_engine, test_table, schema_usage_direct, table_select_direct):
+def test_table_select_granted_then_usage_revoked_cannot_query(test_engine, test_table, compile_1, compile_2, schema_usage_direct, table_select_direct):
     schema_name, table_name = test_table
     role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
@@ -760,12 +786,12 @@ def test_table_select_granted_then_usage_revoked_cannot_query(test_engine, test_
             Login(valid_until=valid_until, password='password'),
             DatabaseConnect(TEST_DATABASE_NAME),
             SchemaUsage(schema_name, direct=schema_usage_direct),
-            TableSelect(schema_name, table_name, direct=schema_usage_direct),
+            TableSelect(schema_name, compile_1(table_name), direct=schema_usage_direct),
         ))
         sync_roles(conn, role_name, grants=(
             Login(valid_until=valid_until, password='password'),
             DatabaseConnect(TEST_DATABASE_NAME),
-            TableSelect(schema_name, table_name, direct=schema_usage_direct),
+            TableSelect(schema_name, compile_2(table_name), direct=schema_usage_direct),
         ))
 
     engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
@@ -774,9 +800,10 @@ def test_table_select_granted_then_usage_revoked_cannot_query(test_engine, test_
             assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
 
 
+@pytest.mark.parametrize('compile', (lambda str: str, lambda str: re.compile(re.escape(str))))
 @pytest.mark.parametrize('schema_usage_direct', (False, True))
 @pytest.mark.parametrize('table_select_direct', (False, True))
-def test_table_select_granted_can_query(test_engine, test_table, schema_usage_direct, table_select_direct):
+def test_table_select_granted_can_query(test_engine, test_table, compile, schema_usage_direct, table_select_direct):
     schema_name, table_name = test_table
     role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
@@ -785,7 +812,7 @@ def test_table_select_granted_can_query(test_engine, test_table, schema_usage_di
             Login(valid_until=valid_until, password='password'),
             DatabaseConnect(TEST_DATABASE_NAME),
             SchemaUsage(schema_name, direct=schema_usage_direct),
-            TableSelect(schema_name, table_name, direct=table_select_direct),
+            TableSelect(schema_name, compile(table_name), direct=table_select_direct),
         ))
 
     engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
@@ -795,7 +822,50 @@ def test_table_select_granted_can_query(test_engine, test_table, schema_usage_di
 
 @pytest.mark.parametrize('schema_usage_direct', (False, True))
 @pytest.mark.parametrize('table_select_direct', (False, True))
-def test_table_select_in_two_steps_on_select_can_query(test_engine, test_table, schema_usage_direct, table_select_direct):
+def test_table_select_via_regex_granted_can_query(test_engine, create_test_table, schema_usage_direct, table_select_direct):
+    schema_name_granted = 'test_schema_' + uuid.uuid4().hex
+    schema_name_not_granted = 'test_schema_' + uuid.uuid4().hex
+
+    table_prefix_granted = 'test_table_' + uuid.uuid4().hex + '_'
+    table_prefix_not_granted = 'test_table_' + uuid.uuid4().hex + '_'
+
+    create_test_table(schema_name_granted, table_prefix_granted + 'a')
+    create_test_table(schema_name_granted, table_prefix_granted + 'b')
+    create_test_table(schema_name_granted, table_prefix_not_granted + 'c')
+    create_test_table(schema_name_not_granted, table_prefix_granted + 'a')
+
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaUsage(schema_name_granted, direct=schema_usage_direct),
+            SchemaUsage(schema_name_not_granted, direct=schema_usage_direct),
+            TableSelect(schema_name_granted, re.compile(re.escape(table_prefix_granted) + '.*'), direct=table_select_direct),
+        ))
+
+    # Assert we can query tables matching regex in the schema
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with engine.connect() as conn:
+        assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name_granted}.{table_prefix_granted + 'a'}")).fetchall()[0][0] == 0
+        assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name_granted}.{table_prefix_granted + 'b'}")).fetchall()[0][0] == 0
+
+    # Assert we can't query tables not matching regex in the schema
+    with engine.connect() as conn:
+        with pytest.raises(sa.exc.ProgrammingError, match='permission denied for (table|relation)'):
+            assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name_granted}.{table_prefix_not_granted + 'c'}")).fetchall()[0][0] == 0
+
+    # Assert we can't query tables that match the regex, but are in another schema
+    with engine.connect() as conn:
+        with pytest.raises(sa.exc.ProgrammingError, match='permission denied for (table|relation)'):
+            assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name_not_granted}.{table_prefix_granted + 'a'}")).fetchall()[0][0] == 0
+
+
+@pytest.mark.parametrize('compile', (lambda str: str, lambda str: re.compile(re.escape(str))))
+@pytest.mark.parametrize('schema_usage_direct', (False, True))
+@pytest.mark.parametrize('table_select_direct', (False, True))
+def test_table_select_in_two_steps_on_select_can_query(test_engine, test_table, compile, schema_usage_direct, table_select_direct):
     schema_name, table_name = test_table
     role_name = get_test_role()
     role_with_direct_permissions = get_test_role()
@@ -811,7 +881,7 @@ def test_table_select_in_two_steps_on_select_can_query(test_engine, test_table, 
         ))
         sync_roles(conn, role_with_direct_permissions, grants=(
             SchemaUsage(schema_name, direct=schema_usage_direct),
-            TableSelect(schema_name, table_name, direct=table_select_direct),
+            TableSelect(schema_name, compile(table_name), direct=table_select_direct),
         ))
 
     engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
@@ -819,9 +889,11 @@ def test_table_select_in_two_steps_on_select_can_query(test_engine, test_table, 
         assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
 
 
+@pytest.mark.parametrize('compile_1', (lambda str: str, lambda str: re.compile(re.escape(str))))
+@pytest.mark.parametrize('compile_2', (lambda str: str, lambda str: re.compile(re.escape(str))))
 @pytest.mark.parametrize('schema_usage_direct', (False, True))
 @pytest.mark.parametrize('table_select_direct', (False, True))
-def test_table_select_in_two_steps_on_usage_can_query(test_engine, test_table, schema_usage_direct, table_select_direct):
+def test_table_select_in_two_steps_on_usage_can_query(test_engine, test_table, compile_1, compile_2, schema_usage_direct, table_select_direct):
     schema_name, table_name = test_table
     role_name = get_test_role()
     role_with_direct_permissions = get_test_role()
@@ -833,11 +905,11 @@ def test_table_select_in_two_steps_on_usage_can_query(test_engine, test_table, s
             RoleMembership(role_with_direct_permissions),
         ))
         sync_roles(conn, role_with_direct_permissions, grants=(
-            TableSelect(schema_name, table_name, direct=table_select_direct),
+            TableSelect(schema_name, compile_1(table_name), direct=table_select_direct),
         ))
         sync_roles(conn, role_with_direct_permissions, grants=(
             SchemaUsage(schema_name, direct=schema_usage_direct),
-            TableSelect(schema_name, table_name, direct=table_select_direct),
+            TableSelect(schema_name, compile_2(table_name), direct=table_select_direct),
         ))
 
     engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
@@ -845,9 +917,10 @@ def test_table_select_in_two_steps_on_usage_can_query(test_engine, test_table, s
         assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
 
 
+@pytest.mark.parametrize('compile', (lambda str: str, lambda str: re.compile(re.escape(str))))
 @pytest.mark.parametrize('schema_usage_direct', (False, True))
 @pytest.mark.parametrize('table_select_direct', (False, True))
-def test_table_select_granted_can_query_after_deleting_unused_roles(test_engine, test_table, schema_usage_direct, table_select_direct):
+def test_table_select_granted_can_query_after_deleting_unused_roles(test_engine, test_table, compile, schema_usage_direct, table_select_direct):
     schema_name, table_name = test_table
     role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
@@ -856,7 +929,7 @@ def test_table_select_granted_can_query_after_deleting_unused_roles(test_engine,
             Login(valid_until=valid_until, password='password'),
             DatabaseConnect(TEST_DATABASE_NAME),
             SchemaUsage(schema_name, direct=schema_usage_direct),
-            TableSelect(schema_name, table_name, direct=table_select_direct),
+            TableSelect(schema_name, compile(table_name), direct=table_select_direct),
         ))
 
     engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
@@ -868,8 +941,9 @@ def test_table_select_granted_can_query_after_deleting_unused_roles(test_engine,
         assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
 
 
+@pytest.mark.parametrize('compile', (lambda str: str, lambda str: re.compile(re.escape(str))))
 @pytest.mark.parametrize('direct', (False, True))
-def test_table_select_cleared_after_deleting_table(test_engine, test_table, direct):
+def test_table_select_cleared_after_deleting_table(test_engine, test_table, compile, direct):
     schema_name, table_name = test_table
     role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
@@ -880,7 +954,7 @@ def test_table_select_cleared_after_deleting_table(test_engine, test_table, dire
             Login(valid_until=valid_until, password='password'),
             DatabaseConnect(TEST_DATABASE_NAME),
             SchemaUsage(schema_name, direct=direct),
-            TableSelect(schema_name, table_name),
+            TableSelect(schema_name, compile(table_name)),
         ))
 
     engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
@@ -905,9 +979,10 @@ def test_table_select_cleared_after_deleting_table(test_engine, test_table, dire
     assert number_of_roles_after == number_of_roles_before - 1
 
 
+@pytest.mark.parametrize('compile', (lambda str: str, lambda str: re.compile(re.escape(str))))
 @pytest.mark.parametrize('schema_usage_direct', (False, True))
 @pytest.mark.parametrize('table_select_direct', (False, True))
-def test_table_select_and_usage_if_owned_by_other_user(test_engine, test_table, schema_usage_direct, table_select_direct):
+def test_table_select_and_usage_if_owned_by_other_user(test_engine, test_table, compile, schema_usage_direct, table_select_direct):
     schema_name, table_name = test_table
     role_name_1 = get_test_role()
     role_name_2 = get_test_role()
@@ -930,7 +1005,7 @@ def test_table_select_and_usage_if_owned_by_other_user(test_engine, test_table, 
             Login(valid_until=valid_until, password='password'),
             DatabaseConnect(TEST_DATABASE_NAME),
             SchemaUsage(schema_name, direct=schema_usage_direct),
-            TableSelect(schema_name, table_name, direct=table_select_direct),
+            TableSelect(schema_name, compile(table_name), direct=table_select_direct),
         ))
 
     with test_engine.connect() as conn:
@@ -941,10 +1016,12 @@ def test_table_select_and_usage_if_owned_by_other_user(test_engine, test_table, 
         assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
 
 
+@pytest.mark.parametrize('compile_1', (lambda str: str, lambda str: re.compile(re.escape(str))))
+@pytest.mark.parametrize('compile_2', (lambda str: str, lambda str: re.compile(re.escape(str))))
 @pytest.mark.parametrize('schema_usage_direct', (False, True))
 @pytest.mark.parametrize('table_select_direct_1', (False, True))
 @pytest.mark.parametrize('table_select_direct_2', (False, True))
-def test_table_select_granted_can_query_even_if_another_table_not_exists(test_engine, test_table, schema_usage_direct, table_select_direct_1, table_select_direct_2):
+def test_table_select_granted_can_query_even_if_another_table_not_exists(test_engine, test_table, compile_1, compile_2, schema_usage_direct, table_select_direct_1, table_select_direct_2):
     schema_name, table_name = test_table
     role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
@@ -953,8 +1030,8 @@ def test_table_select_granted_can_query_even_if_another_table_not_exists(test_en
             Login(valid_until=valid_until, password='password'),
             DatabaseConnect(TEST_DATABASE_NAME),
             SchemaUsage(schema_name, direct=schema_usage_direct),
-            TableSelect(schema_name, table_name, direct=table_select_direct_1),
-            TableSelect(schema_name, 'does-not-exist', direct=table_select_direct_2),
+            TableSelect(schema_name, compile_1(table_name), direct=table_select_direct_1),
+            TableSelect(schema_name, compile_2('does-not-exist'), direct=table_select_direct_2),
         ))
 
     engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
@@ -962,10 +1039,12 @@ def test_table_select_granted_can_query_even_if_another_table_not_exists(test_en
         assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
 
 
+@pytest.mark.parametrize('compile_1', (lambda str: str, lambda str: re.compile(re.escape(str))))
+@pytest.mark.parametrize('compile_2', (lambda str: str, lambda str: re.compile(re.escape(str))))
 @pytest.mark.parametrize('schema_usage_direct', (False, True))
 @pytest.mark.parametrize('table_select_direct_1', (False, True))
 @pytest.mark.parametrize('table_select_direct_2', (False, True))
-def test_table_select_granted_can_query_even_if_another_table_in_schema_not_exists(test_engine, test_table, schema_usage_direct, table_select_direct_1, table_select_direct_2):
+def test_table_select_granted_can_query_even_if_another_table_in_schema_not_exists(test_engine, test_table, compile_1, compile_2, schema_usage_direct, table_select_direct_1, table_select_direct_2):
     schema_name, table_name = test_table
     role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
@@ -974,8 +1053,8 @@ def test_table_select_granted_can_query_even_if_another_table_in_schema_not_exis
             Login(valid_until=valid_until, password='password'),
             DatabaseConnect(TEST_DATABASE_NAME),
             SchemaUsage(schema_name, direct=schema_usage_direct),
-            TableSelect(schema_name, table_name, direct=table_select_direct_1),
-            TableSelect('does-not-exist', table_name, direct=table_select_direct_2),
+            TableSelect(schema_name, compile_1(table_name), direct=table_select_direct_1),
+            TableSelect('does-not-exist', compile_1(table_name), direct=table_select_direct_2),
         ))
 
     engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
@@ -1004,20 +1083,22 @@ def test_schema_usage_repeated_does_not_increase_role_count(test_engine, test_ta
     assert count_roles_1 == count_roles_2
 
 
+@pytest.mark.parametrize('compile_1', (lambda str: str, lambda str: re.compile(re.escape(str))))
+@pytest.mark.parametrize('compile_2', (lambda str: str, lambda str: re.compile(re.escape(str))))
 @pytest.mark.parametrize('direct', (False, True))
-def test_table_select_repeated_does_not_increase_role_count(test_engine, test_table, direct):
+def test_table_select_repeated_does_not_increase_role_count(test_engine, test_table, direct, compile_1, compile_2):
     schema_name, table_name = test_table
     role_name = get_test_role()
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
-            TableSelect(schema_name, table_name, direct=direct),
+            TableSelect(schema_name, compile_1(table_name), direct=direct),
         ))
 
         count_roles_1 = conn.execute(sa.text('SELECT count(*) FROM pg_roles')).fetchall()[0][0]
 
         conn.commit()
         sync_roles(conn, role_name, grants=(
-            TableSelect(schema_name, table_name, direct=direct),
+            TableSelect(schema_name, compile_2(table_name), direct=direct),
         ))
 
         count_roles_2 = conn.execute(sa.text('SELECT count(*) FROM pg_roles')).fetchall()[0][0]

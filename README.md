@@ -47,6 +47,7 @@ Developing pg-sync-roles
   -  Table (and table-like) SELECT
 - Also automatically revokes all non-SELECT permissions on table-like objects, for example INSERT.
 - Allows for contents of specific schemas to be ignored for the purposes of management of permissions
+- Table can be matched by regular expression
  
  These features make pg-sync-roles useful when using PostgreSQL as a data warehouse with a high number of users that need granular permissions. The lack of SUPERUSER requirement means that pg-sync-roles is suitable for managed PostgreSQL clusters, for example in Amazon RDS.
  
@@ -74,7 +75,8 @@ docker run --rm -it -e POSTGRES_HOST_AUTH_METHOD=trust -p 5432:5432 postgres
 ```
 
 - [Login and CONNECT to a database](#login-and-connect-to-a-database)
-- [SELECT on a table and USAGE on its schema](#select-on-a-table-and-usage-on-its-schema)
+- [SELECT on a single table and USAGE on its schema](#select-on-a-table-and-usage-on-its-schema)
+- [SELECT on multiple tables matching a regular expression](#select-on-multiple-tables-matching-a-regular-expression)
 - [OWNERship, USAGE, and CREATE on a schema](#select-on-a-table-and-usage-on-its-schema)
 - [Membership of other roles](#membership-of-other-roles)
 - [Hierarchy of roles](#hierarchy-of-roles)
@@ -107,7 +109,7 @@ with sa.create_engine('postgresql+psycopg://postgres@127.0.0.1:5432/').connect()
 > [!WARNING]
 > pg-sync-roles should not be used on roles that should have permissions to multiple database in a cluster (although this limitation may be removed in future versions).
 
-### SELECT on a table and USAGE on its schema 
+### SELECT on a single table and USAGE on its schema
 
 To give a role SELECT on a table, USAGE on its schema using [intermediate roles](#intermediate-roles):
 
@@ -144,6 +146,26 @@ with sa.create_engine('postgresql+psycopg://postgres@127.0.0.1:5432/').connect()
 ```
 
 Avoiding intermediate roles can be useful to avoid performance problems on connection when the connecting user has a high number of role memberships when dealing with thousands of tables and thousands of users. Because `direct=True` adds the role to the ACL on the underlying database object, it is subject to the de-facto limit on how many roles can be granted access on an object, and so you should not do this with more than ~1000 roles granted permissions on a single object.
+
+### SELECT on multiple tables matching a regular expression
+
+To grant USAGE on a schema and SELECT on all tables in that schema that match a regular expression:
+
+```python
+import re
+import sqlalchemy as sa
+from pg_sync_roles import *
+
+with sa.create_engine('postgresql+psycopg://postgres@127.0.0.1:5432/').connect() as conn:
+    sync_roles(
+        conn,
+        'my_role',
+        grants=(
+            SchemaUsage('my_schema'),
+            TableSelect('my_schema', re.compile('my_table_prefix_.+')),
+        ),
+    )
+```
 
 ### OWNERship, USAGE, and CREATE on a schema
 
@@ -269,7 +291,7 @@ A more [complex example of using multiple calls to `sync_roles` can be found in 
 
 #### `SchemaCreate(schema_name, direct=False)`
 
-#### `TableSelect(schema_name, table_name, direct=False)`
+#### `TableSelect(schema_name, table_name: str|re.Pattern, direct=False)`
 
 #### `RoleMembership(role_name)`
 

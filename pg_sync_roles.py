@@ -3,8 +3,10 @@ from functools import partial
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Union
 from uuid import uuid4
 import logging
+import re
 
 import sqlalchemy as sa
 
@@ -78,7 +80,7 @@ class SchemaOwnership:
 @dataclass(frozen=True)
 class TableSelect:
     schema_name: str
-    table_name: str
+    table_name: Union[str, re.Pattern]
     direct: bool = False
 
 
@@ -147,6 +149,22 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         return execute_sql(sql.SQL("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = {role_name})").format(
             role_name=sql.Literal(role_name),
         )).fetchall()[0][0]
+
+    def tables_in_schema_matching_regex(schema_name, table_name_regex):
+        # Inspired by https://dba.stackexchange.com/a/345153/37229 to avoid sequential scan on pg_class
+        table_names = execute_sql(sql.SQL('''
+            SELECT relname
+            FROM pg_depend
+            INNER JOIN pg_class ON pg_class.oid = pg_depend.objid
+            WHERE pg_depend.refobjid = {schema_name}::regnamespace
+              AND pg_depend.refclassid = 'pg_namespace'::regclass
+              AND pg_depend.classid = 'pg_class'::regclass
+              AND pg_class.relkind = ANY(ARRAY['p', 'r', 'v', 'm'])
+            ORDER BY relname
+        ''').format(
+            schema_name=sql.Literal(schema_name),
+        )).fetchall()
+        return tuple(table_name for table_name, in table_names if table_name_regex.match(table_name))
 
     def get_existing(table_name, column_name, values_to_search_for):
         if not values_to_search_for:
@@ -378,6 +396,12 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
     def keys_with_none_value(d):
         return tuple(key for key, value in d.items() if value is None)
 
+    def without_duplicates_preserve_order(seq):
+        # https://stackoverflow.com/a/480227/1319998
+        seen = set()
+        seen_add = seen.add
+        return tuple(x for x in seq if not (x in seen or seen_add(x)))
+
     # Choose the correct library for dynamically constructing SQL based on the underlying
     # engine of the SQLAlchemy connection
     sql = {
@@ -409,35 +433,43 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         SchemaCreate: sql.SQL('SCHEMA'),
     }
 
-    # Split grants by their type
-    database_connects = tuple(grant for grant in grants if isinstance(grant, DatabaseConnect))
-    schema_usages_indirect = tuple(grant for grant in grants if isinstance(grant, SchemaUsage) and not grant.direct)
-    schema_usages_direct = tuple(grant for grant in grants if isinstance(grant, SchemaUsage) and grant.direct)
-    schema_creates_indirect = tuple(grant for grant in grants if isinstance(grant, SchemaCreate) and not grant.direct)
-    schema_creates_direct = tuple(grant for grant in grants if isinstance(grant, SchemaCreate) and grant.direct)
-    schema_ownerships = tuple(grant for grant in grants if isinstance(grant, SchemaOwnership))
-    table_selects_indirect = tuple(grant for grant in grants if isinstance(grant, TableSelect) and not grant.direct)
-    table_selects_direct = tuple(grant for grant in grants if isinstance(grant, TableSelect) and grant.direct)
-    logins = tuple(grant for grant in grants if isinstance(grant, Login))
-    role_memberships = tuple(grant for grant in grants if isinstance(grant, RoleMembership))
-
-    # Gather names of related grants (used for example to check if things exist)
-    all_database_names = tuple(grant.database_name for grant in database_connects)
-    all_schema_names = tuple(grant.schema_name for grant in grants if isinstance(grant, (SchemaUsage, SchemaCreate, SchemaOwnership)))
-    all_table_names = tuple((grant.schema_name, grant.table_name) for grant in table_selects_direct + table_selects_indirect)
-
     # Validation
+    logins = tuple(grant for grant in grants if isinstance(grant, Login))
     if len(logins) > 1:
         raise ValueError('At most 1 Login object can be passed via the grants parameter')
 
     with transaction():
-        # Get database OID that are in database-specific role names
-        db_oid = get_database_oid()
-
-        # Find existing objects where needed
+        # Find existing databases and schemas
+        database_connects = tuple(grant for grant in grants if isinstance(grant, DatabaseConnect))
+        all_database_names = tuple(grant.database_name for grant in database_connects)
+        all_schema_names = tuple(grant.schema_name for grant in grants if isinstance(grant, (SchemaUsage, SchemaCreate, SchemaOwnership)))
         databases_that_exist = set(get_existing('pg_database', 'datname', all_database_names))
         schemas_that_exist = set(get_existing('pg_namespace', 'nspname', all_schema_names))
+
+        # Find table selects: in schemas that exist expand all those specified by regex
+        table_selects = tuple(grant for grant in grants if isinstance(grant, TableSelect) and (grant.schema_name,) in schemas_that_exist)
+        table_selects_exact_name = tuple(grant for grant in table_selects if not isinstance(grant.table_name, re.Pattern))
+        table_selects_regex_name = tuple(grant for grant in table_selects if isinstance(grant.table_name, re.Pattern))
+        table_selects = without_duplicates_preserve_order(table_selects_exact_name + tuple(
+            TableSelect(grant.schema_name, table_name, direct=grant.direct)
+            for grant in table_selects_regex_name
+            for table_name in tables_in_schema_matching_regex(grant.schema_name, grant.table_name)
+        ))
+        all_table_names = tuple((grant.schema_name, grant.table_name) for grant in table_selects)
         tables_that_exist = set(get_existing_in_schema('pg_class', 'relnamespace', 'relname', all_table_names))
+
+        # Split grants by their type
+        schema_usages_indirect = tuple(grant for grant in grants if isinstance(grant, SchemaUsage) and not grant.direct)
+        schema_usages_direct = tuple(grant for grant in grants if isinstance(grant, SchemaUsage) and grant.direct)
+        schema_creates_indirect = tuple(grant for grant in grants if isinstance(grant, SchemaCreate) and not grant.direct)
+        schema_creates_direct = tuple(grant for grant in grants if isinstance(grant, SchemaCreate) and grant.direct)
+        schema_ownerships = tuple(grant for grant in grants if isinstance(grant, SchemaOwnership))
+        table_selects_indirect = tuple(grant for grant in table_selects if not grant.direct)
+        table_selects_direct = tuple(grant for grant in table_selects if grant.direct)
+        role_memberships = tuple(grant for grant in grants if isinstance(grant, RoleMembership))
+
+        # Get database OID that are in database-specific role names
+        db_oid = get_database_oid()
 
         # Filter out ACLs grants for databases, schemas and tables that don't exist
         # (But including ACLs on schemas that we're going to own and so will create if necessary)
