@@ -408,7 +408,7 @@ Following details the main internal behaviour of `sync_roles`. It's not exhausti
 - [Existence of this project](#existence-of-this-project)
 - [Usage of intermediate roles](#usage-of-intermediate-roles)
 - [Avoiding usage of intermediate roles for some cases](#avoiding-usageo-of-intermediate-roles-for-some-cases)
-- [Structure of the intermediate role names][#structure-of-the-intermediate-role-names]
+- [Structure of the intermediate role names](#structure-of-the-intermediate-role-names)
 - [A declarative API](#a-declarative-api)
 
 ### Existence of this project
