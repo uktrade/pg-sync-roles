@@ -13,7 +13,7 @@ Python utility functions to ensure that PostgreSQL roles have certain privileges
 
 ### Contents
 
-Using pg-sync-rples
+Using pg-sync-roles
 
 - [Features](#features)
 - [Installation](#installation)
