@@ -283,7 +283,12 @@ A more [complex example of using multiple calls to `sync_roles` can be found in 
 
 ### Grant types
 
-#### `Login(password, valid_until)`
+#### `Login(valid_until=Optional[datetime], password=Optional[str])`
+
+Gives the ability to login with `password` until `valid_until`.
+
+- If `valid_until` is `None`, then the role can login forever.
+- If `password` is `None`, then any existing password is preserved.
 
 #### `DatabaseConnect(database_name)`
 

@@ -361,10 +361,12 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
 
     def grant_login(role_name, login):
         logger.info("Granting LOGIN on login %s to role %s", login, role_name)
-        execute_sql(sql.SQL('ALTER ROLE {role_name} WITH LOGIN PASSWORD {password} VALID UNTIL {valid_until}').format(
+        execute_sql(sql.SQL('ALTER ROLE {role_name} WITH LOGIN {password} VALID UNTIL {valid_until}').format(
             role_name=sql.Identifier(role_name),
-            password=sql.Literal(login.password),
-            valid_until=sql.Literal(login.valid_until.isoformat()),
+            password=sql.SQL('PASSWORD {password}').format(
+                password=sql.Literal(login.password)
+            ) if login.password is not None else sql.SQL(''),
+            valid_until=sql.Literal(login.valid_until.isoformat() if login.valid_until is not None else 'infinity'),
         ))
 
     def revoke_login(role_name):
@@ -547,7 +549,7 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         login_row = next((perm for perm in existing_permissions if perm['on'] == 'cluster' and perm['privilege_type'] == 'LOGIN'), None)
         can_login = login_row is not None
 
-        valid_until = datetime.strptime(login_row['name_1'], '%Y-%m-%dT%H:%M:%S.%f%z') if login_row is not None else None
+        valid_until = datetime.strptime(login_row['name_1'], '%Y-%m-%dT%H:%M:%S.%f%z') if login_row is not None and login_row['name_1'] is not None else None
         logins_to_grant = logins and (not can_login or valid_until != logins[0].valid_until or logins[0].password is not None)
         logins_to_revoke = not logins and can_login
 
@@ -736,7 +738,9 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         # Grant login if we need to
         login_row = next((perm for perm in existing_permissions if perm['on'] == 'cluster' and perm['privilege_type'] == 'LOGIN'), None)
         can_login = login_row is not None
-        valid_until = datetime.strptime(login_row['name_1'], '%Y-%m-%dT%H:%M:%S.%f%z') if login_row is not None else None
+        valid_until = datetime.strptime(login_row['name_1'], '%Y-%m-%dT%H:%M:%S.%f%z') if login_row is not None and login_row['name_1'] is not None else None
+        logins_to_grant = logins and (not can_login or valid_until != logins[0].valid_until or logins[0].password is not None)
+        logins_to_revoke = not logins and can_login
         if logins_to_grant:
             grant_login(role_name, logins[0])
         logins_to_revoke = not logins and can_login

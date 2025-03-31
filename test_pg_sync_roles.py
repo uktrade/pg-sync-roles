@@ -554,22 +554,46 @@ def test_login_wrapt_can_connect(test_engine, monkeypatch):
         assert conn.execute(sa.text("SELECT 1")).fetchall()[0][0] == 1
 
 
-def test_login_can_connect_after_second_sync_by_no_password(test_engine):
+@pytest.mark.parametrize('get_valid_until_1', (lambda: None, lambda: datetime.now(timezone.utc) + timedelta(minutes=10)))
+@pytest.mark.parametrize('get_valid_until_2', (lambda: None, lambda: datetime.now(timezone.utc) + timedelta(minutes=10)))
+def test_login_can_connect_after_second_sync_with_valid_until_but_no_password(test_engine, get_valid_until_1, get_valid_until_2):
     role_name = get_test_role()
-    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
-            Login(valid_until=valid_until, password='password'),
+            Login(valid_until=get_valid_until_1(), password='password'),
             DatabaseConnect(TEST_DATABASE_NAME),
         ))
         sync_roles(conn, role_name, grants=(
-            Login(valid_until=valid_until),
+            Login(valid_until=get_valid_until_1()),
             DatabaseConnect(TEST_DATABASE_NAME),
         ))
 
     engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
     with engine.connect() as conn:
         assert conn.execute(sa.text("SELECT 1")).fetchall()[0][0] == 1
+
+
+@pytest.mark.parametrize('get_valid_until_initial', (
+    lambda: None,
+    lambda: datetime.now(timezone.utc) - timedelta(minutes=10),
+    lambda: datetime.now(timezone.utc) + timedelta(minutes=10),
+))
+def test_login_cannot_connect_after_second_sync_with_no_password_and_valid_until_in_past(test_engine, get_valid_until_initial):
+    role_name = get_test_role()
+    valid_until_past = datetime.now(timezone.utc) - timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=get_valid_until_initial(), password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+        ))
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until_past),
+            DatabaseConnect(TEST_DATABASE_NAME),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with pytest.raises(sa.exc.OperationalError, match='password authentication failed'):
+        engine.connect()
 
 
 def test_multiple_login_raises_value_error(test_engine):
