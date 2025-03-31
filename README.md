@@ -302,6 +302,8 @@ Gives the ability to login with `password` until `valid_until`.
 
 #### `SchemaOwnership(schema_name)`
 
+#### `TableOwnership(schema_name, table_name)`
+
 
 ### Function to delete unused/orphan roles
 
