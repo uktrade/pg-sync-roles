@@ -237,6 +237,8 @@ def test_database_connect_does_not_accumulate_roles(test_engine):
 @pytest.mark.parametrize('grants', [
     (),
     (Login(valid_until=datetime(2000,1,1, tzinfo=timezone.utc)),),
+    (Login(valid_until=None),),
+    (Login(valid_until=datetime.now(timezone.utc) + timedelta(minutes=10)),),
     (DatabaseConnect(TEST_DATABASE_NAME),),
     (RoleMembership(TEST_BASE_ROLE),),
 ])
@@ -277,6 +279,8 @@ def test_initial_grant_takes_lock(test_engine, grants):
 @pytest.mark.parametrize('get_grants', [
     lambda _, __: (),
     lambda _, __: (Login(valid_until=datetime(2000,1,1, tzinfo=timezone.utc)),),
+    lambda _, __: (Login(valid_until=None),),
+    lambda _, __: (Login(valid_until=datetime.now(timezone.utc) + timedelta(minutes=10)),),
     lambda _, __: (DatabaseConnect(TEST_DATABASE_NAME),),
     lambda _, __: (RoleMembership(TEST_BASE_ROLE),),
     lambda schema_name, table_name: (SchemaOwnership(schema_name),),
@@ -365,12 +369,16 @@ def test_login_expired_valid_until_cannot_connect(test_engine):
         engine.connect()
 
 
-def test_login_incorrect_password_cannot_connect(test_engine):
+@pytest.mark.parametrize('get_valid_until', (
+    lambda: None,
+    lambda: datetime.now(timezone.utc) - timedelta(minutes=10),
+    lambda: datetime.now(timezone.utc) + timedelta(minutes=10),
+))
+def test_login_incorrect_password_cannot_connect(test_engine, get_valid_until):
     role_name = get_test_role()
-    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
-            Login(valid_until=valid_until, password='password'),
+            Login(valid_until=get_valid_until(), password='password'),
             DatabaseConnect(TEST_DATABASE_NAME),
         ))
 
@@ -379,13 +387,17 @@ def test_login_incorrect_password_cannot_connect(test_engine):
         engine.connect()
 
 
-def test_login_is_only_applied_to_passed_role(test_engine):
+@pytest.mark.parametrize('get_valid_until', (
+    lambda: None,
+    lambda: datetime.now(timezone.utc) - timedelta(minutes=10),
+    lambda: datetime.now(timezone.utc) + timedelta(minutes=10),
+))
+def test_login_is_only_applied_to_passed_role(test_engine, get_valid_until):
     role_name_with_login = get_test_role()
     role_name_without_login = get_test_role()
-    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
     with test_engine.connect() as conn:
         sync_roles(conn, role_name_with_login, grants=(
-            Login(valid_until=valid_until, password='password'),
+            Login(valid_until=get_valid_until(), password='password'),
             DatabaseConnect(TEST_DATABASE_NAME),
         ))
         sync_roles(conn, role_name_without_login, grants=(
@@ -397,12 +409,15 @@ def test_login_is_only_applied_to_passed_role(test_engine):
         engine.connect()
 
 
-def test_login_without_database_connect_cannot_connect(test_engine):
+@pytest.mark.parametrize('get_valid_until', (
+    lambda: None,
+    lambda: datetime.now(timezone.utc) + timedelta(minutes=10),
+))
+def test_login_without_database_connect_cannot_connect(test_engine, get_valid_until):
     role_name = get_test_role()
-    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
-            Login(valid_until=valid_until, password='password'),
+            Login(valid_until=get_valid_until(), password='password'),
         ))
 
     engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
@@ -410,12 +425,15 @@ def test_login_without_database_connect_cannot_connect(test_engine):
         engine.connect()
 
 
-def test_login_with_different_database_connect_cannot_connect(root_engine, test_engine):
+@pytest.mark.parametrize('get_valid_until', (
+    lambda: None,
+    lambda: datetime.now(timezone.utc) + timedelta(minutes=10),
+))
+def test_login_with_different_database_connect_cannot_connect(root_engine, test_engine, get_valid_until):
     role_name = get_test_role()
-    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
     with root_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
-            Login(valid_until=valid_until, password='password'),
+            Login(valid_until=get_valid_until(), password='password'),
             DatabaseConnect(ROOT_DATABASE_NAME),
         ))
 
@@ -442,16 +460,24 @@ def test_login_with_valid_until_initialy_future_but_changed_to_be_in_the_past_ca
         engine.connect()
 
 
-def test_login_with_with_connect_then_revoked_cannot_connect(test_engine):
+@pytest.mark.parametrize('get_valid_until_1', (
+    lambda: None,
+    lambda: datetime.now(timezone.utc) + timedelta(minutes=10),
+))
+@pytest.mark.parametrize('get_valid_until_2', (
+    lambda: None,
+    lambda: datetime.now(timezone.utc) + timedelta(minutes=10),
+))
+def test_login_with_with_connect_then_revoked_cannot_connect(test_engine, get_valid_until_1, get_valid_until_2):
     role_name = get_test_role()
     valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
-            Login(valid_until=valid_until, password='password'),
+            Login(valid_until=get_valid_until_1(), password='password'),
             DatabaseConnect(TEST_DATABASE_NAME),
         ))
         sync_roles(conn, role_name, grants=(
-            Login(valid_until=valid_until, password='password'),
+            Login(valid_until=get_valid_until_2(), password='password'),
         ))
 
     engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
@@ -459,12 +485,16 @@ def test_login_with_with_connect_then_revoked_cannot_connect(test_engine):
         engine.connect()
 
 
-def test_login_with_with_connect_then_login_revoked_cannot_connect(test_engine):
+@pytest.mark.parametrize('get_valid_until', (
+    lambda: None,
+    lambda: datetime.now(timezone.utc) - timedelta(minutes=10),
+    lambda: datetime.now(timezone.utc) + timedelta(minutes=10),
+))
+def test_login_with_with_connect_then_login_revoked_cannot_connect(test_engine, get_valid_until):
     role_name = get_test_role()
-    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
-            Login(valid_until=valid_until, password='password'),
+            Login(valid_until=get_valid_until(), password='password'),
             DatabaseConnect(TEST_DATABASE_NAME),
         ))
         sync_roles(conn, role_name, grants=(
@@ -476,16 +506,25 @@ def test_login_with_with_connect_then_login_revoked_cannot_connect(test_engine):
         engine.connect()
 
 
-def test_login_cannot_connect_with_old_password(test_engine):
+@pytest.mark.parametrize('get_valid_until_1', (
+    lambda: None,
+    lambda: datetime.now(timezone.utc) - timedelta(minutes=10),
+    lambda: datetime.now(timezone.utc) + timedelta(minutes=10),
+))
+@pytest.mark.parametrize('get_valid_until_2', (
+    lambda: None,
+    lambda: datetime.now(timezone.utc) - timedelta(minutes=10),
+    lambda: datetime.now(timezone.utc) + timedelta(minutes=10),
+))
+def test_login_cannot_connect_with_old_password(test_engine, get_valid_until_1, get_valid_until_2):
     role_name = get_test_role()
-    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
-            Login(valid_until=valid_until, password='password'),
+            Login(valid_until=get_valid_until_1(), password='password'),
             DatabaseConnect(TEST_DATABASE_NAME),
         ))
         sync_roles(conn, role_name, grants=(
-            Login(valid_until=valid_until, password='newpasswrd'),
+            Login(valid_until=get_valid_until_2(), password='newpasswrd'),
             DatabaseConnect(TEST_DATABASE_NAME),
         ))
 
@@ -494,12 +533,15 @@ def test_login_cannot_connect_with_old_password(test_engine):
         engine.connect()
 
 
-def test_login_can_connect(test_engine):
+@pytest.mark.parametrize('get_valid_until', (
+    lambda: None,
+    lambda: datetime.now(timezone.utc) + timedelta(minutes=10),
+))
+def test_login_can_connect(test_engine, get_valid_until):
     role_name = get_test_role()
-    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
-            Login(valid_until=valid_until, password='password'),
+            Login(valid_until=get_valid_until(), password='password'),
             DatabaseConnect(TEST_DATABASE_NAME),
         ))
 
@@ -508,7 +550,11 @@ def test_login_can_connect(test_engine):
         assert conn.execute(sa.text("SELECT 1")).fetchall()[0][0] == 1
 
 
-def test_login_wrapt_can_connect(test_engine, monkeypatch):
+@pytest.mark.parametrize('get_valid_until', (
+    lambda: None,
+    lambda: datetime.now(timezone.utc) + timedelta(minutes=10),
+))
+def test_login_wrapt_can_connect(test_engine, monkeypatch, get_valid_until):
     # Certain instrumentation (elastic-apm specifically) does not play well with psycopg2 because
     # it wraps the connection objects, which then do not pass its runtime type checking and raise
     # an exception when sql.SQL(...).as_string is called which sync_roles does under the hood
@@ -545,7 +591,7 @@ def test_login_wrapt_can_connect(test_engine, monkeypatch):
 
     with test_engine.connect() as conn:
         sync_roles(conn, role_name, grants=(
-            Login(valid_until=valid_until, password='password'),
+            Login(valid_until=get_valid_until(), password='password'),
             DatabaseConnect(TEST_DATABASE_NAME),
         ))
 
@@ -564,7 +610,7 @@ def test_login_can_connect_after_second_sync_with_valid_until_but_no_password(te
             DatabaseConnect(TEST_DATABASE_NAME),
         ))
         sync_roles(conn, role_name, grants=(
-            Login(valid_until=get_valid_until_1()),
+            Login(valid_until=get_valid_until_2()),
             DatabaseConnect(TEST_DATABASE_NAME),
         ))
 
