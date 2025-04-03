@@ -78,6 +78,12 @@ class SchemaOwnership:
 
 
 @dataclass(frozen=True)
+class TableOwnership:
+    schema_name: str
+    table_name: str
+
+
+@dataclass(frozen=True)
 class TableSelect:
     schema_name: str
     table_name: Union[str, re.Pattern]
@@ -345,18 +351,18 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         ))
 
     def grant_ownership(object_type, role_name, object_name):
-        logger.info("Granting schema ownership on %s %s to role %s", object_type, object_name, role_name)
+        logger.info("Granting ownership on %s %s to role %s", object_type, object_name, role_name)
         execute_sql(sql.SQL('ALTER {object_type} {object_name} OWNER TO {role_name}').format(
             object_type=object_type,
             role_name=sql.Identifier(role_name),
-            object_name=sql.Identifier(object_name),
+            object_name=sql.Identifier(*object_name),
         ))
 
     def revoke_ownership(object_type, role_name, object_name):
-        logger.info("Revoking schema ownership of %s %s from role %s", object_type, object_name, role_name)
+        logger.info("Revoking ownership of %s %s from role %s", object_type, object_name, role_name)
         execute_sql(sql.SQL('ALTER {object_type} {object_name} OWNER TO CURRENT_USER').format(
             object_type=object_type,
-            object_name=sql.Identifier(object_name),
+            object_name=sql.Identifier(*object_name),
         ))
 
     def grant_login(role_name, login):
@@ -430,9 +436,11 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
 
     sql_object_types = {
         TableSelect: sql.SQL('TABLE'),
+        TableOwnership: sql.SQL('TABLE'),
         DatabaseConnect: sql.SQL('DATABASE'),
         SchemaUsage: sql.SQL('SCHEMA'),
         SchemaCreate: sql.SQL('SCHEMA'),
+        SchemaOwnership: sql.SQL('SCHEMA'),
     }
 
     # Validation
@@ -444,7 +452,7 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         # Find existing databases and schemas
         database_connects = tuple(grant for grant in grants if isinstance(grant, DatabaseConnect))
         all_database_names = tuple(grant.database_name for grant in database_connects)
-        all_schema_names = tuple(grant.schema_name for grant in grants if isinstance(grant, (SchemaUsage, SchemaCreate, SchemaOwnership, TableSelect)))
+        all_schema_names = tuple(grant.schema_name for grant in grants if isinstance(grant, (SchemaUsage, SchemaCreate, SchemaOwnership, TableSelect, TableOwnership)))
         databases_that_exist = set(get_existing('pg_database', 'datname', all_database_names))
         schemas_that_exist = set(get_existing('pg_namespace', 'nspname', all_schema_names))
 
@@ -457,7 +465,8 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
             for grant in table_selects_regex_name
             for table_name in tables_in_schema_matching_regex(grant.schema_name, grant.table_name)
         ))
-        all_table_names = tuple((grant.schema_name, grant.table_name) for grant in table_selects)
+        table_ownerships = tuple(grant for grant in grants if isinstance(grant, TableOwnership) and (grant.schema_name,) in schemas_that_exist)
+        all_table_names = tuple((grant.schema_name, grant.table_name) for grant in set(table_selects + table_ownerships))
         tables_that_exist = set(get_existing_in_schema('pg_class', 'relnamespace', 'relname', all_table_names))
 
         # Split grants by their type
@@ -468,6 +477,7 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         schema_ownerships = tuple(grant for grant in grants if isinstance(grant, SchemaOwnership))
         table_selects_indirect = tuple(grant for grant in table_selects if not grant.direct)
         table_selects_direct = tuple(grant for grant in table_selects if grant.direct)
+        table_ownerships = tuple(grant for grant in grants if isinstance(grant, TableOwnership))
         role_memberships = tuple(grant for grant in grants if isinstance(grant, RoleMembership))
 
         # Get database OID that are in database-specific role names
@@ -481,6 +491,7 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         schema_usages_direct = tuple(schema_usage for schema_usage in schema_usages_direct if (schema_usage.schema_name,) in schemas_that_exist or schema_usage.schema_name in schema_ownerships_names)
         schema_creates_indirect = tuple(schema_create for schema_create in schema_creates_indirect if (schema_create.schema_name,) in schemas_that_exist or schema_create.schema_name in schema_ownerships_names)
         schema_creates_direct = tuple(schema_create for schema_create in schema_creates_direct if (schema_create.schema_name,) in schemas_that_exist or schema_create.schema_name in schema_ownerships_names)
+        table_ownerships = tuple(table_ownership for table_ownership in table_ownerships if (table_ownership.schema_name, table_ownership.table_name) in tables_that_exist)
         table_selects_indirect = tuple(table_select for table_select in table_selects_indirect if (table_select.schema_name, table_select.table_name) in tables_that_exist)
         table_selects_direct = tuple(table_select for table_select in table_selects_direct if (table_select.schema_name, table_select.table_name) in tables_that_exist)
         all_database_connect_names = tuple(grant.database_name for grant in database_connects)
@@ -537,6 +548,10 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         schema_ownerships_to_revoke = tuple(schema_ownership for schema_ownership in schema_ownerships_that_exist if schema_ownership not in schema_ownerships)
         schema_ownerships_to_grant = tuple(schema_ownership for schema_ownership in schema_ownerships if schema_ownership not in schema_ownerships_that_exist)
 
+        table_ownerships_that_exist = tuple(TableOwnership(perm['name_1'], perm['name_2']) for perm in existing_permissions if perm['on'] == 'table' and perm['privilege_type'] == 'OWNER')
+        table_ownerships_to_revoke = tuple(table_ownership for table_ownership in table_ownerships_that_exist if table_ownership not in table_ownerships)
+        table_ownerships_to_grant = tuple(table_ownership for table_ownership in table_ownerships if table_ownership not in table_ownerships_that_exist)
+
         # And any memberships of the database connect roles or explicitly requested role memberships
         memberships = set(perm['name_1'] for perm in existing_permissions if perm['on'] == 'role' and perm['privilege_type'] == 'MEMBER')
         database_connect_memberships_to_grant = tuple(role for role in database_connect_roles.values() if role not in memberships)
@@ -577,6 +592,8 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
             and not logins_to_revoke
             and not schema_ownerships_to_revoke
             and not schema_ownerships_to_grant
+            and not table_ownerships_to_revoke
+            and not table_ownerships_to_grant
             and not acl_table_permissions_to_grant
             and not acl_schema_permissions_to_grant
             and not acl_table_permissions_to_revoke
@@ -621,6 +638,11 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         schema_ownerships_that_exist = tuple(SchemaOwnership(perm['name_1']) for perm in existing_permissions if perm['on'] == 'schema' and perm['privilege_type'] == 'OWNER')
         schema_ownerships_to_revoke = tuple(schema_ownership for schema_ownership in schema_ownerships_that_exist if schema_ownership not in schema_ownerships)
         schema_ownerships_to_grant = tuple(schema_ownership for schema_ownership in schema_ownerships if schema_ownership not in schema_ownerships_that_exist)
+
+        table_ownerships_that_exist = tuple(TableOwnership(perm['name_1'], perm['name_2']) for perm in existing_permissions if perm['on'] == 'table' and perm['privilege_type'] == 'OWNER')
+        table_ownerships_to_revoke = tuple(table_ownership for table_ownership in table_ownerships_that_exist if table_ownership not in table_ownerships)
+        table_ownerships_to_grant = tuple(table_ownership for table_ownership in table_ownerships if table_ownership not in table_ownerships_that_exist)
+
         database_connect_roles = get_acl_roles(
             'CONNECT', 'pg_database', 'datname', 'datacl', '\\_pgsr\\_global\\_database\\_connect\\_%',
             all_database_connect_names)
@@ -646,6 +668,8 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
             database_connect_roles_to_create
         tables_needing_ownerships = \
             table_select_roles_to_create + \
+            tuple((table_ownership.schema_name, table_ownership.table_name) for table_ownership in table_ownerships_to_revoke) + \
+            tuple((table_ownership.schema_name, table_ownership.table_name) for table_ownership in table_ownerships_to_grant) + \
             tuple((perm[1], perm[2]) for perm in acl_table_permissions_to_revoke) + \
             tuple((perm[1], perm[2]) for perm in acl_table_permissions_to_grant)
         schemas_needing_ownership = \
@@ -660,7 +684,7 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         table_owners = get_owners_in_schema('pg_class', 'relowner', 'relnamespace', 'relname', tables_needing_ownerships)
 
         # ... and the main role we're dealing with if necessary (only needed if giving ownership)
-        role_if_needed = {(role_name,)} if schema_ownerships_to_grant else set()
+        role_if_needed = {(role_name,)} if schema_ownerships_to_grant or table_ownerships_to_grant else set()
 
         # ... and temporarily grant the current user them
         roles_to_grant = tuple((role_if_needed | set(schema_owners) | set(table_owners)) - {(current_user,)})
@@ -668,11 +692,18 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
 
             # Grant or revoke schema ownerships
             for schema_ownership in schema_ownerships_to_revoke:
-                revoke_ownership(sql_object_types[SchemaUsage], role_name, schema_ownership.schema_name)
+                revoke_ownership(sql_object_types[SchemaOwnership], role_name, (schema_ownership.schema_name,))
             for schema_ownership in schema_ownerships_to_grant:
                 if (schema_ownership.schema_name,) not in schemas_that_exist:
                     create_schema(schema_ownership.schema_name)
-                grant_ownership(sql_object_types[SchemaUsage], role_name, schema_ownership.schema_name)
+                grant_ownership(sql_object_types[SchemaOwnership], role_name, (schema_ownership.schema_name,))
+
+            # Grant or revoke table ownerships. Schema create privileges will be tidied up downstream
+            for table_ownership in table_ownerships_to_revoke:
+                revoke_ownership(sql_object_types[TableOwnership], role_name, (table_ownership.schema_name, table_ownership.table_name))
+            for table_ownership in table_ownerships_to_grant:
+                grant(sql_grants[CREATE], sql_object_types[SchemaCreate], (table_ownership.schema_name,), role_name)
+                grant_ownership(sql_object_types[TableOwnership], role_name, (table_ownership.schema_name, table_ownership.table_name))
 
             # Create database connect roles if we need to
             for database_name in database_connect_roles_to_create:
@@ -931,6 +962,15 @@ UNION ALL
   INNER JOIN owned_or_acl a ON a.objid = n.oid
   CROSS JOIN aclexplode(COALESCE(n.nspacl, acldefault('n', n.nspowner)))
   WHERE classid = 'pg_namespace'::regclass AND grantee = refobjid
+
+  UNION ALL
+
+  -- Table ownership
+  SELECT 'table' AS on, nspname AS name_1, relname AS name_2, NULL AS name_3, 'OWNER' AS privilege_type
+  FROM pg_class c
+  INNER JOIN pg_namespace n ON n.oid = c.relnamespace
+  INNER JOIN owned_or_acl a ON a.objid = c.oid
+  WHERE classid = 'pg_class'::regclass AND objsubid = 0 AND deptype = 'o'
 
   UNION ALL
 

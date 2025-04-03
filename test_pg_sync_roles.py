@@ -11,10 +11,11 @@ from pg_sync_roles import (
     Login,
     DatabaseConnect,
     RoleMembership,
+    TableOwnership,
     TableSelect,
     SchemaUsage,
     SchemaOwnership,
-    SchemaCreate
+    SchemaCreate,
 )
 
 import pytest
@@ -1261,6 +1262,43 @@ def test_ownership_if_schema_does_not_exist(test_engine):
         assert conn.execute(sa.text(f"SELECT nspowner::regrole FROM pg_namespace WHERE nspname='{schema_name}'")).fetchall()[0][0] == role_name
 
 
+def test_table_ownership_can_be_granted(test_engine, test_table):
+    schema_name, table_name = test_table
+    role_name = get_test_role()
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            TableOwnership(schema_name, table_name),
+        ))
+
+    with test_engine.connect() as conn:
+        assert conn.execute(sa.text(f"SELECT relowner::regrole FROM pg_class c INNER JOIN pg_namespace n ON n.oid = c.relnamespace WHERE nspname = '{schema_name}' AND relname = '{table_name}'")).fetchall()[0][0] == role_name
+
+
+def test_table_ownership_can_be_revoked(test_engine, test_table):
+    schema_name, table_name = test_table
+    role_name = get_test_role()
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            TableOwnership(schema_name, table_name),
+        ))
+        sync_roles(conn, role_name, grants=())
+
+    with test_engine.connect() as conn:
+        assert conn.execute(sa.text(f"SELECT relowner::regrole::name = CURRENT_USER FROM pg_class c INNER JOIN pg_namespace n ON n.oid = c.relnamespace WHERE nspname = '{schema_name}' AND relname = '{table_name}'")).fetchall()[0][0]
+
+
+def test_ownership_if_table_does_not_exist(test_engine):
+    schema_name = 'test_schema_' + uuid.uuid4().hex
+    table_name = 'test_table_' + uuid.uuid4().hex
+    role_name = get_test_role()
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            TableOwnership(schema_name, table_name),
+        ))
+
+    with test_engine.connect() as conn:
+        assert conn.execute(sa.text(f"SELECT count(*) FROM pg_class c INNER JOIN pg_namespace n ON n.oid = c.relnamespace WHERE nspname = '{schema_name}' AND relname = '{table_name}'")).fetchall()[0][0] == 0
+
 
 @pytest.mark.parametrize('direct', (False, True))
 def test_direct_table_permission_can_be_revoked(test_engine, test_table, direct):
@@ -1287,6 +1325,112 @@ def test_direct_table_permission_can_be_revoked(test_engine, test_table, direct)
     with engine.connect() as conn:
         with pytest.raises(sa.exc.ProgrammingError, match='permission denied for (table|relation)'):
             assert conn.execute(sa.text(f"SELECT count(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
+
+
+def test_table_ownership_does_not_override_schema_ownership(test_engine, test_table):
+    schema_name, table_name = test_table
+    role_name = get_test_role()
+
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            SchemaOwnership(schema_name),
+            TableOwnership(schema_name, table_name),
+        ))
+
+    with test_engine.connect() as conn:
+        assert conn.execute(sa.text(f"SELECT nspowner::regrole::name FROM pg_namespace WHERE nspname='{schema_name}'")).fetchall()[0][0] == role_name
+
+    with test_engine.connect() as conn:
+        assert conn.execute(sa.text(f"SELECT relowner::regrole FROM pg_class c INNER JOIN pg_namespace n ON n.oid = c.relnamespace WHERE nspname = '{schema_name}' AND relname = '{table_name}'")).fetchall()[0][0] == role_name
+
+
+@pytest.mark.parametrize('direct', (False, True))
+def test_table_ownership_does_not_override_schema_create(test_engine, test_table, direct):
+    schema_name, table_name = test_table
+    new_table_name = 'test_table_' + uuid.uuid4().hex
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaCreate(schema_name, direct=direct),
+            TableOwnership(schema_name, table_name),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with engine.begin() as conn:
+        conn.execute(sa.text(f'CREATE TABLE {schema_name}.{new_table_name} (id int)'))
+
+
+def test_table_ownership_does_not_have_extraneous_schema_create(test_engine, test_table):
+    schema_name, table_name = test_table
+    new_table_name = 'test_table_' + uuid.uuid4().hex
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            TableOwnership(schema_name, table_name),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with engine.begin() as conn:
+        with pytest.raises(sa.exc.ProgrammingError, match='permission denied for schema'):
+            conn.execute(sa.text(f'CREATE TABLE {schema_name}.{new_table_name} (id int)'))
+
+
+@pytest.mark.parametrize('direct', (False, True))
+def test_table_ownership_does_not_needlessly_revoke_schema_create(test_engine, test_table, direct):
+    schema_name, table_name = test_table
+    new_table_name = 'test_table_' + uuid.uuid4().hex
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaCreate(schema_name, direct=direct),
+        ))
+
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaCreate(schema_name, direct=direct),
+            TableOwnership(schema_name, table_name),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with engine.begin() as conn:
+        conn.execute(sa.text(f'CREATE TABLE {schema_name}.{new_table_name} (id int)'))
+
+
+@pytest.mark.parametrize('direct', (False, True))
+def test_table_ownership_can_revoke_schema_create(test_engine, test_table, direct):
+    schema_name, table_name = test_table
+    new_table_name = 'test_table_' + uuid.uuid4().hex
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaCreate(schema_name, direct=direct),
+        ))
+
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            TableOwnership(schema_name, table_name),
+        ))
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+    with engine.begin() as conn:
+        with pytest.raises(sa.exc.ProgrammingError, match='permission denied for schema'):
+            conn.execute(sa.text(f'CREATE TABLE {schema_name}.{new_table_name} (id int)'))
 
 
 @pytest.mark.parametrize('direct', (False, True))
