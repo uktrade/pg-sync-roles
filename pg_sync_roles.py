@@ -95,9 +95,6 @@ class Login:
     valid_until: datetime = None
     password: str = None
 
-    def __str__(self):
-        return f"with password: (redacted) until {self.valid_until}"
-
 
 @dataclass(frozen=True)
 class RoleMembership:
