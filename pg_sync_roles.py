@@ -973,7 +973,8 @@ UNION ALL
   FROM pg_class c
   INNER JOIN pg_namespace n ON n.oid = c.relnamespace
   INNER JOIN owned_or_acl a ON a.objid = c.oid
-  WHERE classid = 'pg_class'::regclass AND objsubid = 0 AND deptype = 'o'
+  INNER JOIN relkind_mapping r ON r.relkind = c.relkind
+  WHERE classid = 'pg_class'::regclass AND objsubid = 0 AND deptype = 'o' AND r.relkind != 'S'
 
   UNION ALL
 

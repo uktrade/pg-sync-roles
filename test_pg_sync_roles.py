@@ -1535,6 +1535,39 @@ def test_direct_view_permission_is_revoked(test_engine, test_view, direct):
 
 
 @pytest.mark.parametrize('direct', (False, True))
+def test_table_ownership_does_not_revoke_sequence(test_engine, test_sequence, direct):
+    schema_name, sequence_name = test_sequence
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}', **engine_future)
+
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaCreate(schema_name, direct=direct),
+            SchemaUsage(schema_name, direct=direct),
+        ))
+
+    with test_engine.connect() as conn:
+        conn.execute(sa.text(f'GRANT {role_name} TO CURRENT_USER'))
+        conn.execute(sa.text(f'ALTER SEQUENCE {schema_name}.{sequence_name} OWNER TO {role_name}'))
+        conn.commit()
+
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaCreate(schema_name, direct=direct),
+            SchemaUsage(schema_name, direct=direct),
+        ))
+
+    with engine.connect() as conn:
+        assert conn.execute(sa.text(f"SELECT nextval('{schema_name}.{sequence_name}');")).fetchall()[0][0] == 101
+
+
+@pytest.mark.parametrize('direct', (False, True))
 def test_direct_sequence_permission_is_revoked(test_engine, test_sequence, direct):
     schema_name, sequence_name = test_sequence
     role_name = get_test_role()
@@ -1546,7 +1579,7 @@ def test_direct_sequence_permission_is_revoked(test_engine, test_sequence, direc
         sync_roles(conn, role_name, grants=())
 
     with test_engine.connect() as conn:
-        conn.execute(sa.text(f'GRANT USAGE ON TABLE {schema_name}.{sequence_name} TO {role_name}'))
+        conn.execute(sa.text(f'GRANT USAGE ON SEQUENCE {schema_name}.{sequence_name} TO {role_name}'))
         conn.commit()
 
     with test_engine.connect() as conn:
