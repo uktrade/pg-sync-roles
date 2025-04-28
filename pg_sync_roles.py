@@ -37,6 +37,7 @@ class Privilege(Enum):
     USAGE = 12
     SET = 13
     ALTER_SYSTEM = 14
+    ALL_PRIVILEGES = 15
 
 
 SELECT = Privilege.SELECT
@@ -53,6 +54,7 @@ EXECUTE = Privilege.EXECUTE
 USAGE = Privilege.USAGE
 SET = Privilege.SET
 ALTER_SYSTEM = Privilege.ALTER_SYSTEM
+ALL_PRIVILEGES = Privilege.ALL_PRIVILEGES
 
 
 @dataclass(frozen=True)
@@ -513,8 +515,10 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
         acl_table_permissions_set = set(acl_table_permissions_tuples)
         table_selects_direct_tuples = tuple(('SELECT', table_select.schema_name, table_select.table_name) for table_select in table_selects_direct)
         table_selects_direct_set = set(table_selects_direct_tuples)
-        acl_table_permissions_to_revoke = tuple(row for row in acl_table_permissions_tuples if row not in table_selects_direct_set)
-        acl_table_permissions_to_grant = tuple(row for row in table_selects_direct_tuples if row not in acl_table_permissions_set)
+        table_ownership_permissions_tuples = tuple(('DELETE', table_ownership.schema_name, table_ownership.table_name) for table_ownership in table_ownerships)
+        table_ownership_permissions_set = set(table_ownership_permissions_tuples)
+        acl_table_permissions_to_revoke = tuple(row for row in acl_table_permissions_tuples if row not in table_selects_direct_set and row not in table_ownership_permissions_set)
+        acl_table_permissions_to_grant = tuple(row for row in (table_selects_direct_tuples + table_ownership_permissions_tuples) if row not in acl_table_permissions_set)
 
         # Real ACL permissions on schemas
         acl_schema_permissions_tuples = tuple((row['privilege_type'], row['name_1']) for row in get_acl_rows(existing_permissions, _SCHEMA))
@@ -744,8 +748,17 @@ def sync_roles(conn, role_name, grants=(), preserve_existing_grants_in_schemas=(
             acl_table_permissions_set = set(acl_table_permissions_tuples)
             table_selects_direct_tuples = tuple(('SELECT', table_select.schema_name, table_select.table_name) for table_select in table_selects_direct)
             table_selects_direct_set = set(table_selects_direct_tuples)
-            acl_table_permissions_to_revoke = tuple(row for row in acl_table_permissions_tuples if row not in table_selects_direct_set)
-            acl_table_permissions_to_grant = tuple(row for row in table_selects_direct_tuples if row not in acl_table_permissions_set)
+            # acl_table_permissions_to_revoke = tuple(row for row in acl_table_permissions_tuples if row not in table_selects_direct_set)
+            # acl_table_permissions_to_grant = tuple(row for row in table_selects_direct_tuples if row not in acl_table_permissions_set)
+            table_ownership_permissions_tuples = tuple(
+                ('DELETE', table_ownership.schema_name, table_ownership.table_name) for table_ownership in
+                table_ownerships)
+            table_ownership_permissions_set = set(table_ownership_permissions_tuples)
+            acl_table_permissions_to_revoke = tuple(row for row in acl_table_permissions_tuples if
+                                                    row not in table_selects_direct_set and row not in table_ownership_permissions_set)
+            acl_table_permissions_to_grant = tuple(
+                row for row in (table_selects_direct_tuples + table_ownership_permissions_tuples) if
+                row not in acl_table_permissions_set)
 
             # Real ACL permissions on schemas
             acl_schema_permissions_tuples = tuple((row['privilege_type'], row['name_1']) for row in get_acl_rows(existing_permissions, _SCHEMA))
