@@ -1567,6 +1567,28 @@ def test_table_ownership_does_not_revoke_sequence(test_engine, test_sequence, di
         assert conn.execute(sa.text(f"SELECT nextval('{schema_name}.{sequence_name}');")).fetchall()[0][0] == 101
 
 
+def test_role_can_delete_from_only_post_table_ownership(test_engine, test_table_with_data):
+    schema_name, table_name = test_table_with_data
+    role_name = get_test_role()
+    valid_until = datetime.now(timezone.utc) + timedelta(minutes=10)
+
+    engine = sa.create_engine(f'{engine_type}://{role_name}:password@127.0.0.1:5432/{TEST_DATABASE_NAME}',
+                              **engine_future)
+
+    with test_engine.connect() as conn:
+        sync_roles(conn, role_name, grants=(
+            Login(valid_until=valid_until, password='password'),
+            DatabaseConnect(TEST_DATABASE_NAME),
+            SchemaUsage(schema_name, direct=True),
+            TableOwnership(schema_name, table_name),
+        ))
+
+    with engine.connect() as conn:
+        conn.execute(sa.text(f"DELETE FROM ONLY {schema_name}.{table_name} WHERE id = 1"))
+
+        assert conn.execute(sa.text(f"SELECT COUNT(*) FROM {schema_name}.{table_name}")).fetchall()[0][0] == 0
+
+
 @pytest.mark.parametrize('direct', (False, True))
 def test_direct_sequence_permission_is_revoked(test_engine, test_sequence, direct):
     schema_name, sequence_name = test_sequence
